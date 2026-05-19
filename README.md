@@ -2,6 +2,10 @@
 
 基于 FastAPI 框架的后端服务，实现模块接口无缝对接。
 
+启动服务：python src/index.py
+运行任务分解测试脚本：python test_task_decompose.py（启动服务后需新开终端）
+ps:注意路径！
+
 ## 接口规范
 
 ### 统一响应格式
