@@ -1,7 +1,7 @@
 """
 请求模型定义
 """
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -189,6 +189,7 @@ class ItineraryValidateRequest(BaseModel):
     """行程校验请求"""
     itinerary_id: Optional[str] = None
     day_plans: Optional[List[DayPlan]] = None
+    structured_requirement: Optional[Dict[str, Any]] = None  # 添加结构化需求字段
 
 
 class ItineraryValidateResponse(BaseModel):
