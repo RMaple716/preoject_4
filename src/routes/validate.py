@@ -334,7 +334,8 @@ def check_itinerary_conflicts(day_plans: List[Dict[str, Any]], structured_requir
         for attraction in day_plan.get("attractions", []):
             daily_activities.append({
                 "name": attraction.get("name", "未知景点"),
-                "start_time": attraction.get("visit_time", "上午"),
+                "start_time": attraction.get("start_time") or attraction.get("visit_time", "上午"),
+                "end_time": attraction.get("end_time"),
                 "duration": attraction.get("visit_duration", "2小时"),
                 "activity_type": "attraction",
                 "location": attraction.get("address", ""),
@@ -346,13 +347,14 @@ def check_itinerary_conflicts(day_plans: List[Dict[str, Any]], structured_requir
         for meal in day_plan.get("meals", []):
             daily_activities.append({
                 "name": meal.get("name", "用餐"),
-                "start_time": meal.get("meal_time", "中午"),
-                "duration": "1小时",
+                "start_time": meal.get("start_time") or meal.get("time") or meal.get("meal_time", "中午"),
+                "end_time": meal.get("end_time"),
+                "duration": meal.get("duration", "1小时"),
                 "activity_type": "meal",
                 "location": meal.get("address", ""),
-                "cost": meal.get("avg_price", 0)
+                "cost": meal.get("avg_price_per_person", 0)
             })
-            total_cost += meal.get("avg_price", 0)
+            total_cost += meal.get("avg_price_per_person", 0)
         
         # 添加交通活动
         if day_plan.get("transport"):

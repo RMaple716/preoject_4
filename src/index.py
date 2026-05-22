@@ -53,6 +53,7 @@ app.include_router(src.routes.agent_router)
 app.include_router(src.routes.itinerary_router)
 app.include_router(src.routes.validate_router)
 app.include_router(src.routes.static_data_router)
+app.include_router(src.routes.integration_router)
 
 # 根路径
 @app.get("/")

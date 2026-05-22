@@ -6,8 +6,9 @@ from .agent import router as agent_router
 from .itinerary import router as itinerary_router
 from .validate import router as validate_router
 from .static_data import router as static_data_router
+from .integration import router as integration_router
 
 __all__ = [
     "health_router", "requirement_router", "task_router", 
-    "agent_router", "itinerary_router", "validate_router", "static_data_router"
+    "agent_router", "itinerary_router", "validate_router", "static_data_router", "integration_router"
 ]
