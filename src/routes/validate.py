@@ -276,6 +276,88 @@ def format_minutes(minutes: int) -> str:
     return f"{hours:02d}:{mins:02d}"
 
 
+def parse_opening_hours(opening_hours_str: str):
+    """
+    解析开放时间字符串为开始和结束时间（分钟）
+    
+    支持格式:
+    - "08:00-17:00" -> (480, 1020)
+    - "09:00-18:00" -> (540, 1080)
+    - "全天开放" -> (0, 1440)
+    - "不开放" -> None
+    
+    Args:
+        opening_hours_str: 开放时间字符串
+    
+    Returns:
+        (start_minutes, end_minutes) 或 None
+    """
+    if not opening_hours_str or opening_hours_str in ["不开放", "关闭", ""]:
+        return None
+    
+    # 处理特殊格式
+    if "全天" in opening_hours_str:
+        return (0, 1440)
+    
+    # 尝试解析 "HH:MM-HH:MM" 格式
+    try:
+        parts = opening_hours_str.split("-")
+        if len(parts) == 2:
+            start_minutes = parse_time_to_minutes(parts[0].strip())
+            end_minutes = parse_time_to_minutes(parts[1].strip())
+            return (start_minutes, end_minutes)
+    except:
+        pass
+    
+    return None
+
+
+def check_attraction_opening_hours(attraction: Dict[str, Any], visit_start: int, visit_end: int) -> List[Dict[str, Any]]:
+    """
+    检查景点游览时间是否在开放时间内
+    
+    Args:
+        attraction: 景点信息（包含opening_hours字段）
+        visit_start: 计划游览开始时间（分钟）
+        visit_end: 计划游览结束时间（分钟）
+    
+    Returns:
+        冲突列表
+    """
+    conflicts = []
+    opening_hours_str = attraction.get("opening_hours")
+    
+    if not opening_hours_str:
+        # 如果没有开放时间信息，跳过检查
+        return conflicts
+    
+    open_times = parse_opening_hours(opening_hours_str)
+    if not open_times:
+        return conflicts
+    
+    open_start, open_end = open_times
+    attraction_name = attraction.get("name", "未知景点")
+    
+    # 检查是否完全在开放时间外
+    if visit_end <= open_start or visit_start >= open_end:
+        conflicts.append({
+            "type": "outside_opening_hours",
+            "description": f"'{attraction_name}' 不在开放时间内（开放时间: {opening_hours_str}）",
+            "severity": "error",
+            "activities": [attraction_name]
+        })
+    # 检查是否部分在开放时间外
+    elif visit_start < open_start or visit_end > open_end:
+        conflicts.append({
+            "type": "partial_outside_opening_hours",
+            "description": f"'{attraction_name}' 部分游览时间超出开放范围（开放时间: {opening_hours_str}）",
+            "severity": "warning",
+            "activities": [attraction_name]
+        })
+    
+    return conflicts
+
+
 def calculate_transport_time(from_location: str, to_location: str) -> int:
     """
     估算两点之间的交通时间（简化版）
@@ -373,6 +455,23 @@ def check_itinerary_conflicts(day_plans: List[Dict[str, Any]], structured_requir
         if daily_activities:
             day_result = detect_time_conflicts(daily_activities)
             for conflict in day_result["conflicts"]:
+                conflict["day"] = day_num
+                conflict["date"] = date
+                all_conflicts.append(conflict)
+        
+        # 检查景点开放时间
+        for attraction in day_plan.get("attractions", []):
+            # 解析游览时间
+            start_time_str = attraction.get("start_time") or attraction.get("visit_time", "上午")
+            start_minutes = parse_time_to_minutes(start_time_str)
+            
+            duration_str = attraction.get("visit_duration", "2小时")
+            duration_minutes = parse_duration_to_minutes(duration_str)
+            end_minutes = start_minutes + duration_minutes
+            
+            # 检查开放时间
+            opening_conflicts = check_attraction_opening_hours(attraction, start_minutes, end_minutes)
+            for conflict in opening_conflicts:
                 conflict["day"] = day_num
                 conflict["date"] = date
                 all_conflicts.append(conflict)

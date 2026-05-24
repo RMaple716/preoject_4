@@ -2,15 +2,43 @@
 
 基于 FastAPI 框架的后端服务，实现模块接口无缝对接。
 
-启动服务：python src/index.py
-运行任务分解测试脚本：python test_task_decompose.py（启动服务后需新开终端）
-运行时间冲突检测测试：python test_time_conflict.py（启动服务后需新开终端）
-ps:注意路径！
+**启动服务**: `python src/index.py`  
+**完整API测试**: `python test_all_api_interfaces.py`  
+**任务分解测试**: `python test_task_decompose.py`  
+**时间冲突检测测试**: `python test_time_conflict.py`  
+**开放时间校验测试**: `python test_opening_hours_validation.py`  
+
+⚠️ **注意路径**: 所有命令在项目根目录执行
+
+---
+
+## 📊 API接口总览（25个接口）
+
+### ✅ 已完成接口清单
+
+| 模块 | 接口数 | 核心功能 |
+|------|--------|---------|
+| 健康检查 | 1 | 服务状态检查 |
+| 用户需求 | 3 | 提交、解析、查询 |
+| 任务分发 | 3 | 分解、查询、更新 |
+| 智能体 | 4 | 景点/交通/住宿/美食推荐 |
+| 行程管理 | 5 | CRUD操作 + 用户查询 |
+| **校验接口** | **2** | **时间冲突 + 完整校验（含开放时间检查）** ⭐ |
+| 静态数据 | 3 | 景点/城市查询 |
+| 行程整合 | 2 | 整合 + 路线优化 |
+| **总计** | **25** | **完整覆盖所有功能** |
+
+📖 **详细文档**: 
+- [完整API接口文档](docs/API_INTERFACES_COMPLETE.md)
+- [API快速参考手册](docs/API_QUICK_REFERENCE.md)
+- [校验模块使用指南](docs/VALIDATION_MODULE_GUIDE.md)
+
+---
 
 ## 接口规范
 
 ### 统一响应格式
-```json
+``json
 {
   "code": 200,
   "msg": "提示信息",
@@ -35,6 +63,8 @@ ps:注意路径！
 | 404 | 资源不存在 |
 | 500 | 服务器内部错误 |
 
+---
+
 ## 接口列表
 
 ### 1. 健康检查
@@ -46,7 +76,7 @@ ps:注意路径！
 - `GET /api/v1/requirement/{requirement_id}` - 获取需求详情
 
 ### 3. 任务分发接口
-- `POST /api/v1/task/decompose` - **任务分解**（将结构化需求拆分为子任务）
+- `POST /api/v1/task/decompose` - **任务分解**（将结构化需求拆分为子任务）⭐ 核心
 - `POST /api/v1/task/dispatch` - 分发任务到各智能体（旧版，保留兼容）
 - `GET /api/v1/task/{task_id}` - 获取任务状态（支持主任务和子任务）
 - `POST /api/v1/task/update/{task_id}` - 更新任务结果（供智能体调用）
@@ -64,9 +94,17 @@ ps:注意路径！
 - `DELETE /api/v1/itinerary/{itinerary_id}` - 删除行程
 - `GET /api/v1/itinerary/user/{user_id}` - 获取用户所有行程
 
-### 6. 校验接口 ⭐ 新增
+### 6. 校验接口 ⭐ 新增功能
+
 - `POST /api/v1/validation/time-conflict` - **时间冲突检测**
-- `POST /api/v1/validation/itinerary` - **完整行程校验**（含预算检查）
+- `POST /api/v1/validation/itinerary` - **完整行程校验**（含预算检查 + **景点开放时间检查**）⭐ 新增
+
+**校验内容**:
+1. ✅ 时间冲突检测（活动重叠、时长合理性）
+2. ✅ 预算校验（总花费 vs 总预算）
+3. ✅ **景点开放时间检查**（游览时间是否在开放时间内）⭐ 新增
+4. ✅ 每日总时长检查（≤12小时）
+5. ✅ 生成优化建议
 
 ### 7. 静态数据接口
 - `GET /api/v1/static/attractions` - 获取景点列表
@@ -74,32 +112,76 @@ ps:注意路径！
 - `GET /api/v1/static/cities` - 获取城市列表
 - `GET /api/v1/static/locations/{city_name}` - 获取地点库
 
+### 8. 行程整合接口
+- `POST /api/v1/integration/combine` - 行程整合（自动校验）
+- `POST /api/v1/integration/optimize-route` - 路线优化
+
+---
+
 ## 🆕 最新功能
 
-### 任务分解模块 (Task Decomposition)
-**文档**: `任务分解模块说明.md`  
+### 1. 景点开放时间校验 ⭐ 新增
+
+**功能**: 检查计划游览时间是否在景点开放时间内
+
+**支持的开放时间格式**:
+- `"08:30-17:00"` - 标准格式
+- `"全天开放"` - 全天开放
+- `"不开放"` / `"关闭"` - 跳过检查
+
+**检测类型**:
+- ❌ **完全超出开放时间** (error级别) - 阻止行程保存
+- ⚠️ **部分超出开放时间** (warning级别) - 提示用户
+
+**使用示例**:
+```
+# 在景点数据中添加 opening_hours 字段
+attraction = {
+    "name": "故宫博物院",
+    "start_time": "09:00",
+    "visit_duration": "3小时",
+    "opening_hours": "08:30-17:00",  # ⭐ 开放时间
+    "ticket_price": 60
+}
+
+# 调用完整行程校验
+response = requests.post(
+    "http://127.0.0.1:9091/api/v1/validation/itinerary",
+    json={
+        "day_plans": [...],
+        "structured_requirement": {...}
+    }
+)
+```
+
+**测试脚本**: `python test_opening_hours_validation.py`
+
+### 2. 任务分解模块 (Task Decomposition)
+
+**文档**: `docs/API_INTERFACES_COMPLETE.md`  
 **测试**: `test_task_decompose.py`
 
 核心功能：
 - ✅ 自动预算分配（住宿30%、餐饮25%、交通15%、门票20%、其他10%）
 - ✅ 将结构化需求拆分为4个子任务（景点、住宿、美食、交通）
-- ✅ 业务规则验证（天数、人数、最低预算）
+- ✅ 业务规则验证（天数1-30、人数1-20、最低预算每人每天100元）
 - ✅ 任务状态追踪和进度计算
 
-### 时间冲突检测算法 (Time Conflict Detection) ⭐ 新
-**文档**: `时间冲突检测算法说明.md`、`时间冲突检测快速开始.md`  
+### 3. 时间冲突检测算法 (Time Conflict Detection)
+
+**文档**: `docs/VALIDATION_MODULE_GUIDE.md`  
 **测试**: `test_time_conflict.py`
 
 核心功能：
 - ✅ 检测活动时间重叠
-- ✅ 验证游览时长合理性
-- ✅ 检查时间安排是否符合日常作息
+- ✅ 验证游览时长合理性（30分钟-8小时）
+- ✅ 检查时间安排是否符合日常作息（6:00-23:00）
 - ✅ 控制每日行程总时长（不超过12小时）
 - ✅ 预算超支检测
 - ✅ 生成优化建议
 
 支持的输入格式：
-```json
+```
 {
   "start_time": "09:00",      // 精确时间
   "start_time": "上午",        // 中文时间槽
@@ -186,7 +268,7 @@ python test_time_conflict.py
 ## API 使用示例
 
 ### 任务分解
-```bash
+```
 curl -X POST "http://127.0.0.1:9091/api/v1/task/decompose" \
   -H "Content-Type: application/json" \
   -d '{
@@ -203,7 +285,7 @@ curl -X POST "http://127.0.0.1:9091/api/v1/task/decompose" \
 ```
 
 ### 时间冲突检测 ⭐
-```bash
+```
 curl -X POST "http://127.0.0.1:9091/api/v1/validation/time-conflict" \
   -H "Content-Type: application/json" \
   -d '{
