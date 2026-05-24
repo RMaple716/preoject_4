@@ -1,28 +1,27 @@
 import apiClient from './api';
 
+export interface DayPlan {
+  day: number;
+  date: string;
+  attractions?: any[];
+  transport?: any;
+  hotel?: any;
+  meals?: any[];
+  notes?: string;
+}
+
 export interface Itinerary {
   itinerary_id?: string;
   user_id: string;
   requirement_id: string;
+  title?: string;
   city_name: string;
   travel_days: number;
-  total_budget: number;
-  schedule: ScheduleItem[];
+  total_budget?: number;
+  day_plans?: DayPlan[];
+  status?: string; // draft/completed/archived
   created_at?: string;
   updated_at?: string;
-}
-
-export interface ScheduleItem {
-  day: number;
-  time_slot: string;
-  activity_type: string;
-  name: string;
-  location?: string;
-  start_time?: string;
-  end_time?: string;
-  duration?: string;
-  cost?: number;
-  description?: string;
 }
 
 export const itineraryApi = {
