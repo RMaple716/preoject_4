@@ -24,7 +24,7 @@ export const staticDataApi = {
   getCities: () => 
     apiClient.get('/static/cities'),
   
-  // 获取地点库
-  getLocations: (cityName: string) => 
-    apiClient.get(`/static/locations/${cityName}`),
+  // 获取地点库 - 后端暂未实现此接口
+  // getLocations: (cityName: string) => 
+  //   apiClient.get(`/static/locations/${cityName}`),
 };

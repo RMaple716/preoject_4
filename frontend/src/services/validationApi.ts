@@ -10,6 +10,7 @@ export interface ScheduleItem {
   end_time?: string;
   duration?: string;
   activity_type: string;
+  location?: string; // 活动地点（可选）
 }
 
 export interface ValidationResult {
