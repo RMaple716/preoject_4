@@ -1,5 +1,5 @@
 """数据库模型定义"""
-from sqlalchemy import Column, String, Float, Integer, Text, JSON, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, String, Float, Integer, Text, JSON, DateTime, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from src.database import Base
@@ -132,3 +132,67 @@ class Restaurant(Base):
     
     def __repr__(self):
         return f"<Restaurant(restaurant_id='{self.restaurant_id}', name='{self.name}')>"
+
+
+# ============== 业务数据表 ==============
+
+class UserRequirement(Base):
+    """用户需求表"""
+    __tablename__ = "user_requirements"
+    
+    requirement_id = Column(String(50), primary_key=True, comment="需求ID")
+    user_id = Column(String(50), nullable=False, index=True, comment="用户ID")
+    requirement_data = Column(JSON, nullable=False, comment="需求数据JSON")
+    status = Column(String(20), default="pending", comment="状态：pending/parsed/processing/completed")
+    parsed_keywords = Column(JSON, comment="解析后的关键词")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    
+    # 关系
+    tasks = relationship("Task", back_populates="requirement", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<UserRequirement(requirement_id='{self.requirement_id}', status='{self.status}')>"
+
+
+class Task(Base):
+    """任务表"""
+    __tablename__ = "tasks"
+    
+    task_id = Column(String(50), primary_key=True, comment="任务ID")
+    batch_id = Column(String(50), nullable=False, index=True, comment="批次ID")
+    requirement_id = Column(String(50), ForeignKey("user_requirements.requirement_id"), nullable=False, index=True, comment="需求ID")
+    agent_type = Column(String(50), nullable=False, comment="智能体类型：attraction/accommodation/food/transport")
+    parameters = Column(JSON, comment="任务参数")
+    status = Column(String(20), default="pending", comment="状态：pending/running/success/failed")
+    result = Column(JSON, comment="任务结果")
+    error = Column(Text, comment="错误信息")
+    progress = Column(Float, default=0.0, comment="进度百分比")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    
+    # 关系
+    requirement = relationship("UserRequirement", back_populates="tasks")
+    
+    def __repr__(self):
+        return f"<Task(task_id='{self.task_id}', agent='{self.agent_type}', status='{self.status}')>"
+
+
+class Itinerary(Base):
+    """行程表"""
+    __tablename__ = "itineraries"
+    
+    itinerary_id = Column(String(50), primary_key=True, comment="行程ID")
+    user_id = Column(String(50), nullable=False, index=True, comment="用户ID")
+    requirement_id = Column(String(50), ForeignKey("user_requirements.requirement_id"), comment="关联需求ID")
+    title = Column(String(200), comment="行程标题")
+    day_plans = Column(JSON, nullable=False, comment="每日计划JSON数组")
+    total_budget = Column(Float, comment="总预算")
+    actual_cost = Column(Float, default=0, comment="实际花费")
+    status = Column(String(20), default="draft", comment="状态：draft/saved/published")
+    is_favorite = Column(Boolean, default=False, comment="是否收藏")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    
+    def __repr__(self):
+        return f"<Itinerary(itinerary_id='{self.itinerary_id}', title='{self.title}')>"

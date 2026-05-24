@@ -2,13 +2,14 @@
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from src.database import get_db
 from src.models.response import success_response, error_response
 from src.models.request import TaskDispatchRequest, TaskDispatchResponse, TaskInfo, TaskStatusResponse
+from src.services.database_service import TaskService, RequirementService
 
 router = APIRouter(prefix="/api/v1/task", tags=["任务分发"])
-tasks_store = {}
-requirements_store = {}  # 用于存储需求信息，实际应从数据库获取
 
 # ============== 任务分解核心逻辑 ==============
 
@@ -143,7 +144,7 @@ def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str,
 # ============== API 路由 ==============
 
 @router.post("/decompose")
-async def decompose_task(request_data: Dict[str, Any]):
+async def decompose_task(request_data: Dict[str, Any], db: Session = Depends(get_db)):
     """
     任务分解接口：将结构化需求拆分为各智能体的子任务
     
@@ -158,6 +159,11 @@ async def decompose_task(request_data: Dict[str, Any]):
     
     if not requirement_id or not structured_requirement:
         return error_response(code=400, msg="缺少必要参数：requirement_id 或 structured_requirement")
+    
+    # 验证需求是否存在
+    requirement = RequirementService.get_requirement(db, requirement_id)
+    if not requirement:
+        return error_response(code=404, msg="需求不存在")
     
     # 验证必填字段
     required_fields = ["city_name", "travel_days", "total_budget", "travel_date", "traveler_count"]
@@ -185,122 +191,110 @@ async def decompose_task(request_data: Dict[str, Any]):
     
     # 生成任务批次ID
     batch_id = str(uuid.uuid4())
-    task_id = batch_id  # 使用 batch_id 作为主任务ID
     
-    # 存储所有子任务
-    tasks_info = []
-    for subtask in subtasks:
-        task_id_local = subtask["subtask_id"]
-        tasks_store[task_id_local] = {
-            "task_id": task_id_local,
-            "batch_id": batch_id,
-            "requirement_id": requirement_id,
-            "agent": subtask["agent_type"],
-            "parameters": subtask["parameters"],
-            "status": "pending",
-            "result": None,
-            "error": None,
-            "created_at": datetime.now().isoformat()
-        }
-        tasks_info.append(TaskInfo(
-            task_id=task_id_local,
-            agent=subtask["agent_type"],
-            status="pending",
-            result=None
-        ))
+    # 批量创建子任务到数据库
+    tasks = TaskService.create_batch_tasks(
+        db=db,
+        batch_id=batch_id,
+        requirement_id=requirement_id,
+        subtasks=subtasks
+    )
     
-    # 存储主任务信息
-    tasks_store[batch_id] = {
-        "task_id": batch_id,
-        "batch_id": batch_id,
-        "requirement_id": requirement_id,
-        "type": "main_task",
-        "subtasks": [s["subtask_id"] for s in subtasks],
-        "status": "pending",
-        "progress": 0.0,
-        "created_at": datetime.now().isoformat()
-    }
+    # 构建响应数据
+    tasks_info = [TaskInfo(
+        task_id=task.task_id,
+        agent=task.agent_type,
+        status=task.status,
+        result=None
+    ) for task in tasks]
     
     return success_response(
         data={
-            "task_id": task_id,
+            "task_id": batch_id,
             "batch_id": batch_id,
             "requirement_id": requirement_id,
-            "subtasks": [s.model_dump() for s in tasks_info]
+            "subtasks": [t.model_dump() for t in tasks_info]
         },
         msg="任务分解成功"
     )
 
 
 @router.post("/dispatch")
-async def dispatch_tasks(request: TaskDispatchRequest):
+async def dispatch_tasks(request: TaskDispatchRequest, db: Session = Depends(get_db)):
     """
     旧版任务分发接口（保留兼容）
     """
     batch_id = str(uuid.uuid4())
-    tasks = []
+    subtasks = []
+    
     for agent in request.agents:
-        task_id = str(uuid.uuid4())
-        task_info = TaskInfo(task_id=task_id, agent=agent, status="pending", result=None)
-        tasks.append(task_info)
-        tasks_store[task_id] = {
-            "task_id": task_id, "batch_id": batch_id, "requirement_id": request.requirement_id,
-            "agent": agent, "status": "pending", "result": None, "created_at": datetime.now().isoformat()
-        }
-    return success_response(data=TaskDispatchResponse(batch_id=batch_id, tasks=[t.model_dump() for t in tasks]).model_dump(), msg="任务分发成功")
+        subtasks.append({
+            "agent_type": agent,
+            "parameters": {}
+        })
+    
+    tasks = TaskService.create_batch_tasks(
+        db=db,
+        batch_id=batch_id,
+        requirement_id=request.requirement_id,
+        subtasks=subtasks
+    )
+    
+    tasks_info = [TaskInfo(
+        task_id=task.task_id,
+        agent=task.agent_type,
+        status=task.status,
+        result=None
+    ) for task in tasks]
+    
+    return success_response(
+        data=TaskDispatchResponse(
+            batch_id=batch_id, 
+            tasks=[t.model_dump() for t in tasks_info]
+        ).model_dump(), 
+        msg="任务分发成功"
+    )
 
 
 @router.get("/{task_id}")
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, db: Session = Depends(get_db)):
     """
-    获取任务状态
+    获取任务状态 - 从数据库查询
     """
-    if task_id not in tasks_store:
-        return error_response(code=404, msg="任务不存在")
+    # 先尝试作为批次ID查询
+    progress_info = TaskService.calculate_batch_progress(db, task_id)
     
-    task = tasks_store[task_id]
-    
-    # 如果是主任务，计算进度
-    if task.get("type") == "main_task":
-        subtask_ids = task.get("subtasks", [])
-        completed_count = sum(1 for sid in subtask_ids if tasks_store.get(sid, {}).get("status") == "success")
-        failed_count = sum(1 for sid in subtask_ids if tasks_store.get(sid, {}).get("status") == "failed")
-        total = len(subtask_ids)
-        
-        progress = (completed_count / total * 100) if total > 0 else 0
-        
-        if failed_count > 0:
-            status = "failed"
-        elif completed_count == total:
-            status = "success"
-        else:
-            status = "running"
-        
-        task["status"] = status
-        task["progress"] = progress
-        
+    if progress_info["total"] > 0:
+        # 是批次ID，返回总体进度
         return success_response(data={
             "task_id": task_id,
-            "status": status,
-            "progress": progress,
-            "failed_subtasks": [sid for sid in subtask_ids if tasks_store.get(sid, {}).get("status") == "failed"],
-            "message": f"已完成 {completed_count}/{total} 个子任务"
+            "status": progress_info["status"],
+            "progress": progress_info["progress"],
+            "completed": progress_info["completed"],
+            "failed": progress_info["failed"],
+            "total": progress_info["total"],
+            "message": f"已完成 {progress_info['completed']}/{progress_info['total']} 个子任务"
         }, msg="获取成功")
     
-    # 子任务直接返回
+    # 尝试作为单个任务ID查询
+    task = TaskService.get_task(db, task_id)
+    
+    if not task:
+        return error_response(code=404, msg="任务不存在")
+    
     return success_response(data=TaskStatusResponse(
-        task_id=task["task_id"],
-        agent=task["agent"],
-        status=task["status"],
-        result=task.get("result"),
-        error=task.get("error")
+        task_id=task.task_id,
+        agent=task.agent_type,
+        status=task.status,
+        result=task.result,
+        error=task.error
     ).model_dump(), msg="获取成功")
 
 
 @router.post("/update/{task_id}")
-async def update_task_result(task_id: str, result_data: Dict[str, Any]):
+async def update_task_result(task_id: str, result_data: Dict[str, Any], db: Session = Depends(get_db)):
     """
-    更新任务结果（供智能体调用）
+    更新任务结果（供智能体调用）- 保存到数据库
     
     请求参数:
     {
@@ -309,23 +303,18 @@ async def update_task_result(task_id: str, result_data: Dict[str, Any]):
         "error": null | "错误信息"
     }
     """
-    if task_id not in tasks_store:
+    task = TaskService.update_task_result(
+        db=db,
+        task_id=task_id,
+        status=result_data.get("status", "success"),
+        result=result_data.get("result"),
+        error=result_data.get("error")
+    )
+    
+    if not task:
         return error_response(code=404, msg="任务不存在")
     
-    task = tasks_store[task_id]
-    task["status"] = result_data.get("status", "success")
-    task["result"] = result_data.get("result")
-    task["error"] = result_data.get("error")
-    task["updated_at"] = datetime.now().isoformat()
-    
-    # 如果是子任务，更新主任务的进度
-    batch_id = task.get("batch_id")
-    if batch_id and batch_id in tasks_store:
-        main_task = tasks_store[batch_id]
-        if main_task.get("type") == "main_task":
-            subtask_ids = main_task.get("subtasks", [])
-            completed_count = sum(1 for sid in subtask_ids if tasks_store.get(sid, {}).get("status") == "success")
-            total = len(subtask_ids)
-            main_task["progress"] = (completed_count / total * 100) if total > 0 else 0
-    
-    return success_response(data={"task_id": task_id, "status": task["status"]}, msg="任务结果更新成功")
+    return success_response(
+        data={"task_id": task_id, "status": task.status}, 
+        msg="任务结果更新成功"
+    )
