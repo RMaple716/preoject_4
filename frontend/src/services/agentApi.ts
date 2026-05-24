@@ -11,13 +11,17 @@ export interface AttractionsRequest {
 }
 
 export interface Attraction {
+  attraction_id: string;
   name: string;
-  duration: string;
-  fee: number;
+  city_name: string;
   location: string;
   description?: string;
+  recommended_duration?: string;
+  visit_time_slot?: 'morning' | 'afternoon' | 'evening';
+  ticket_price?: number;
   rating?: number;
   opening_hours?: string;
+  tags?: string[];
 }
 
 export interface AttractionsResponse {
@@ -34,11 +38,14 @@ export interface TransportRequest {
 }
 
 export interface TransportOption {
-  type: string;
-  departure_time: string;
-  arrival_time: string;
-  price: number;
+  transport_id: string;
+  type: 'flight' | 'train' | 'bus' | 'subway' | 'taxi';
+  from: string;
+  to: string;
+  departure_time?: string;
+  arrival_time?: string;
   duration?: string;
+  price?: number;
 }
 
 export interface TransportResponse {
@@ -57,10 +64,12 @@ export interface HotelRequest {
 }
 
 export interface Hotel {
+  hotel_id: string;
   name: string;
-  address: string;
-  price_per_night: number;
-  rating: number;
+  city_name: string;
+  location: string;
+  price_per_night?: number;
+  rating?: number;
   amenities?: string[];
 }
 
@@ -79,11 +88,13 @@ export interface FoodRequest {
 }
 
 export interface Restaurant {
+  restaurant_id: string;
   name: string;
-  cuisine: string;
-  avg_price: number;
-  rating: number;
-  address?: string;
+  city_name: string;
+  location: string;
+  cuisine_type?: string;
+  avg_price?: number;
+  rating?: number;
   specialties?: string[];
 }
 

@@ -321,9 +321,10 @@
 {
   "city_name": "北京",
   "travel_days": 3,
+  "ticket_budget": 1000,
   "preferences": ["历史古迹", "文化体验"],
   "dislikes": ["爬山"],
-  "ticket_budget": 1000,
+  "location_preference": "市中心",
   "traveler_count": 2
 }
 ```
@@ -336,12 +337,17 @@
   "data": {
     "attractions": [
       {
+        "id": "att_001",
         "name": "故宫博物院",
-        "duration": "2-3小时",
-        "fee": 60.0,
-        "location": "北京市东城区",
-        "opening_hours": "08:30-17:00",
-        "rating": 4.8
+        "category": "历史古迹",
+        "suggested_duration": "4小时",
+        "visit_time_slot": "morning",
+        "ticket_price": 60.0,
+        "location": {
+          "lat": 39.916,
+          "lng": 116.397
+        },
+        "tags": ["必去", "室内"]
       }
     ]
   }
@@ -357,10 +363,17 @@
 **请求参数**:
 ```json
 {
-  "from_city": "北京",
-  "to_city": "上海",
-  "travel_date": "2026-06-01",
-  "transport_type": "train"
+  "from_location": {
+    "name": "故宫",
+    "lat": 39.916,
+    "lng": 116.397
+  },
+  "to_location": {
+    "name": "颐和园",
+    "lat": 40.000,
+    "lng": 116.275
+  },
+  "mode_preference": "transit"
 }
 ```
 
@@ -372,11 +385,21 @@
   "data": {
     "transport_options": [
       {
-        "type": "高铁",
-        "departure_time": "08:00",
-        "arrival_time": "12:30",
-        "price": 500.0,
-        "duration": "4.5小时"
+        "from": "故宫博物院",
+        "to": "颐和园",
+        "mode": "transit",
+        "duration_minutes": 50,
+        "cost": 5.0,
+        "steps": [
+          {
+            "instruction": "步行至天安门东站",
+            "distance_m": 500
+          },
+          {
+            "instruction": "乘坐地铁1号线",
+            "distance_m": 15000
+          }
+        ]
       }
     ]
   }
@@ -394,9 +417,9 @@
 {
   "city_name": "北京",
   "check_in_date": "2026-06-01",
-  "check_out_date": "2026-06-04",
+  "nights": 3,
   "budget_per_night": 500,
-  "location_preference": "靠近景点"
+  "location_preference": "市中心"
 }
 ```
 
@@ -408,11 +431,13 @@
   "data": {
     "hotels": [
       {
-        "name": "北京王府井酒店",
-        "address": "北京市东城区王府井大街",
-        "price_per_night": 450.0,
-        "rating": 4.5,
-        "distance_to_attractions": "500米"
+        "id": "hotel_001",
+        "name": "北京王府井希尔顿酒店",
+        "address": "东城区王府井大街8号",
+        "price_per_night": 800.0,
+        "rating": 4.8,
+        "distance_to_center_km": 1.5,
+        "amenities": ["早餐", "WiFi", "停车场"]
       }
     ]
   }
@@ -429,8 +454,9 @@
 ```json
 {
   "city_name": "北京",
-  "budget_per_meal": 100,
-  "cuisine_type": "本地特色"
+  "meal_type": "lunch",
+  "budget_per_person": 100,
+  "cuisine_preference": "京菜"
 }
 ```
 
@@ -442,11 +468,16 @@
   "data": {
     "restaurants": [
       {
-        "name": "全聚德烤鸭店",
-        "cuisine": "北京菜",
-        "avg_price": 120.0,
-        "rating": 4.6,
-        "address": "北京市东城区前门大街"
+        "id": "rest_001",
+        "name": "四季民福烤鸭店",
+        "cuisine": "京菜",
+        "avg_price_per_person": 150.0,
+        "rating": 4.7,
+        "recommended_dishes": ["酥香嫩烤鸭", "贝勒烤肉"],
+        "location": {
+          "lat": 39.910,
+          "lng": 116.400
+        }
       }
     ]
   }

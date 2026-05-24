@@ -97,10 +97,10 @@ const RequirementForm: React.FC = () => {
         }
       });
       
-      if (response.data?.code === 200) {
+      if (response.code === 200) {
         message.success('✅ 需求提交成功！');
         
-        const requirementId = response.data.data.requirement_id;
+        const requirementId = response.data.requirement_id;
         dispatch(setRequirement({
           ...requirement,
           requirement_id: requirementId
@@ -137,7 +137,7 @@ const RequirementForm: React.FC = () => {
           message.error(decomposeData.msg || '任务分解失败');
         }
       } else {
-        message.error(response.data?.msg || '提交失败');
+        message.error(response.msg || '提交失败');
       }
     } catch (error) {
       console.error('提交失败:', error);

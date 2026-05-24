@@ -58,3 +58,11 @@ export type {
 // 新增：健康检查API
 export { healthApi } from './healthApi';
 export type { HealthStatus } from './healthApi';
+
+// 新增：自然语言处理API
+export { nlpApi } from './nlp';
+export type { NLPRequest, NLPResponse } from './nlp';
+
+// 新增：天气API
+export { weatherApi } from './weather';
+export type { CurrentWeather, ForecastDay, WeatherForecast } from './weather';

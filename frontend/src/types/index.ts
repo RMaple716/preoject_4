@@ -25,12 +25,14 @@ export interface Attraction {
   attraction_id: string;
   name: string;
   city_name: string;
-  location?: string;
+  location: string;
   description?: string;
   recommended_duration?: string;
+  visit_time_slot?: 'morning' | 'afternoon' | 'evening';
   ticket_price?: number;
   rating?: number;
   opening_hours?: string;
+  tags?: string[];
 }
 
 // 酒店信息
@@ -38,7 +40,7 @@ export interface Hotel {
   hotel_id: string;
   name: string;
   city_name: string;
-  location?: string;
+  location: string;
   price_per_night?: number;
   rating?: number;
   amenities?: string[];
@@ -49,10 +51,17 @@ export interface Restaurant {
   restaurant_id: string;
   name: string;
   city_name: string;
-  location?: string;
+  location: string;
   cuisine_type?: string;
   avg_price?: number;
   rating?: number;
+  specialties?: string[];
+  meal_type?: 'breakfast' | 'lunch' | 'dinner';
+  meal_time?: string;
+  time?: string;
+  start_time?: string;
+  end_time?: string;
+  duration?: string;
 }
 
 // 交通信息

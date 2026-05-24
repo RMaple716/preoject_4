@@ -1,8 +1,8 @@
 import Home from '../pages/Home';
-import RequirementForm from '../pages/RequirementForm';
+import RequirementForm from '../pages/RequirementFormNew';
 import ItineraryList from '../pages/ItineraryList';
 import ItineraryDetail from '../pages/ItineraryDetail';
-import TaskStatus from '../pages/TaskStatus';
+import TaskStatus from '../pages/TaskStatusNew';
 
 export const routes = [
   {

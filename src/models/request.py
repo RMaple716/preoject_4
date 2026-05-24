@@ -84,9 +84,11 @@ class AttractionsAgentRequest(BaseModel):
     """景点智能体请求"""
     city_name: str
     travel_days: int = Field(..., ge=1)
-    total_budget: Optional[float] = None
+    ticket_budget: Optional[float] = None
     preferences: List[str] = Field(default_factory=list)
+    dislikes: List[str] = Field(default_factory=list)
     location_preference: Optional[str] = None
+    traveler_count: int = Field(1, ge=1, description="旅行人数")
 
 
 class AttractionsAgentResponse(BaseModel):
@@ -94,12 +96,17 @@ class AttractionsAgentResponse(BaseModel):
     attractions: List[dict] = Field(default_factory=list)
 
 
+class Location(BaseModel):
+    """位置信息"""
+    name: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
 class TransportAgentRequest(BaseModel):
     """交通智能体请求"""
-    from_city: str
-    to_city: str
-    travel_date: str
-    transport_type: Optional[str] = None  # plane/train/bus
+    from_location: Location
+    to_location: Location
+    mode_preference: Optional[str] = None  # walking/transit/driving
 
 
 class TransportAgentResponse(BaseModel):
@@ -111,7 +118,8 @@ class HotelAgentRequest(BaseModel):
     """住宿智能体请求"""
     city_name: str
     check_in_date: str
-    check_out_date: str
+    nights: Optional[int] = None
+    check_out_date: Optional[str] = None
     budget_per_night: Optional[float] = None
     location_preference: Optional[str] = None
 
@@ -124,13 +132,29 @@ class HotelAgentResponse(BaseModel):
 class FoodAgentRequest(BaseModel):
     """美食智能体请求"""
     city_name: str
-    budget_per_meal: Optional[float] = None
-    cuisine_type: Optional[str] = None
+    meal_type: Optional[str] = None  # breakfast/lunch/dinner
+    budget_per_person: Optional[float] = None
+    cuisine_preference: Optional[str] = None
 
 
 class FoodAgentResponse(BaseModel):
     """美食智能体响应"""
     restaurants: List[dict] = Field(default_factory=list)
+
+class AgentMetadata(BaseModel):
+    """智能体元数据"""
+    processing_time_ms: float = Field(..., description="处理耗时(毫秒)")
+    source: str = Field("ai_generated", description="数据来源: ai_generated/mock_data/database")
+    model_used: Optional[str] = None
+    over_budget: bool = Field(False, description="是否超出预算")
+
+class AgentResponseEnvelope(BaseModel):
+    """智能体响应信封"""
+    task_id: str
+    status: str = Field(..., description="状态: success/failed/partial")
+    data: Dict[str, Any]
+    metadata: AgentMetadata
+    error_message: Optional[str] = None
 
 
 # ============== 行程相关 ==============

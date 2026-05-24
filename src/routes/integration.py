@@ -99,6 +99,21 @@ def integrate_agent_results_to_daily_plans(
     hotels_data = agent_results.get("accommodation", {}).get("hotels", [])
     restaurants_data = agent_results.get("food", {}).get("restaurants", [])
     transport_data = agent_results.get("transport", {}).get("transport_options", [])
+
+    # 为景点数据添加city_name字段
+    for attraction in attractions_data:
+        if "city_name" not in attraction:
+            attraction["city_name"] = city_name
+
+    # 为酒店数据添加city_name字段
+    for hotel in hotels_data:
+        if "city_name" not in hotel:
+            hotel["city_name"] = city_name
+
+    # 为餐厅数据添加city_name字段
+    for restaurant in restaurants_data:
+        if "city_name" not in restaurant:
+            restaurant["city_name"] = city_name
     
     # 对景点进行路线优化
     optimized_attractions = calculate_route_optimization(attractions_data)
@@ -226,9 +241,9 @@ def integrate_agent_results_to_daily_plans(
         for attr in day_attractions:
             daily_cost += attr.get("ticket_price", 0) * traveler_count
         for meal in day_meals:
-            daily_cost += meal.get("avg_price_per_person", 0) * traveler_count
+            daily_cost += meal.get("avg_price", 0) * traveler_count
         if day_transport:
-            daily_cost += day_transport.get("cost", 0) * traveler_count
+            daily_cost += day_transport.get("price", 0) * traveler_count
         if day_hotel:
             daily_cost += day_hotel.get("price_per_night", 0)
         

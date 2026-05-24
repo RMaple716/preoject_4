@@ -47,23 +47,39 @@ const { TextArea } = Input;
 
 // 景点类型定义
 interface Attraction {
+  attraction_id: string;
   name: string;
+  city_name: string;
+  location: string;
+  description?: string;
+  recommended_duration?: string;
+  visit_time_slot?: 'morning' | 'afternoon' | 'evening';
   visit_time?: string;
   visit_duration?: string;
+  start_time?: string;
+  end_time?: string;
   ticket_price?: number;
-  location?: string;
-  description?: string;
   rating?: number;
+  opening_hours?: string;
+  tags?: string[];
 }
 
 // 餐饮类型定义
 interface Meal {
+  restaurant_id: string;
   name: string;
-  meal_time?: string;
-  restaurant_name?: string;
+  city_name: string;
+  location: string;
   cuisine_type?: string;
-  price_per_person?: number;
+  avg_price?: number;
+  rating?: number;
+  specialties?: string[];
   meal_type?: string; // breakfast/lunch/dinner
+  meal_time?: string;
+  time?: string;
+  start_time?: string;
+  end_time?: string;
+  duration?: string;
 }
 
 // 景点编辑表单组件
@@ -416,14 +432,26 @@ const HotelInfo: React.FC<{ hotel: any }> = ({ hotel }) => (
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
       <Text strong><HomeOutlined /> 住宿安排</Text>
       <Text>{hotel.name}</Text>
-      {hotel.address && (
-        <Text type="secondary">{hotel.address}</Text>
+      {hotel.location && (
+        <Text type="secondary">
+          <EnvironmentOutlined style={{ marginRight: 4 }} />
+          {hotel.location}
+        </Text>
       )}
       {hotel.price_per_night && (
         <Text type="secondary">¥{hotel.price_per_night}/晚</Text>
       )}
       {hotel.rating && (
         <Tag color="gold">⭐ {hotel.rating}</Tag>
+      )}
+      {hotel.amenities && hotel.amenities.length > 0 && (
+        <div>
+          {hotel.amenities.map((amenity: string, idx: number) => (
+            <Tag key={idx} style={{ marginBottom: 4 }}>
+              {amenity}
+            </Tag>
+          ))}
+        </div>
       )}
     </Space>
   </Card>
@@ -639,10 +667,10 @@ const ItineraryDetail: React.FC = () => {
       setLoading(true);
       const response = await itineraryApi.getById(itineraryId);
       
-      if (response.data?.code === 200) {
-        setItinerary(response.data.data);
+      if (response.code === 200) {
+        setItinerary(response.data);
       } else {
-        message.error(response.data?.msg || '获取行程详情失败');
+        message.error(response.msg || '获取行程详情失败');
       }
     } catch (error) {
       console.error('获取行程详情失败:', error);
@@ -663,11 +691,11 @@ const ItineraryDetail: React.FC = () => {
         day_plans: itinerary.day_plans,
       });
       
-      if (response.data?.code === 200) {
+      if (response.code === 200) {
         message.success('保存成功');
-        setItinerary(response.data.data);
+        setItinerary(response.data);
       } else {
-        message.error(response.data?.msg || '保存失败');
+        message.error(response.msg || '保存失败');
       }
     } catch (error) {
       console.error('保存失败:', error);
@@ -847,11 +875,11 @@ const ItineraryDetail: React.FC = () => {
     
     try {
       const response = await itineraryApi.delete(id);
-      if (response.data?.code === 200) {
+      if (response.code === 200) {
         message.success('行程已删除');
         navigate('/itineraries');
       } else {
-        message.error(response.data?.msg || '删除失败');
+        message.error(response.msg || '删除失败');
       }
     } catch (error) {
       console.error('删除失败:', error);

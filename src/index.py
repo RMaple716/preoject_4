@@ -9,6 +9,11 @@
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -54,6 +59,8 @@ app.include_router(src.routes.itinerary_router)
 app.include_router(src.routes.validate_router)
 app.include_router(src.routes.static_data_router)
 app.include_router(src.routes.integration_router)
+app.include_router(src.routes.nlp_router)
+app.include_router(src.routes.weather_router)
 
 # 根路径
 @app.get("/")
