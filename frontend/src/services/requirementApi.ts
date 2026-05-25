@@ -5,7 +5,7 @@ export interface UserRequirement {
   travel_days: number;
   total_budget?: number;
   travel_type?: string;
-  start_date?: string;
+  travel_date?: string;
   preferences?: string[];
 }
 

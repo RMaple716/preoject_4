@@ -75,7 +75,8 @@ apiClient.interceptors.response.use(
           errorMessage = '请求的资源不存在';
           break;
         case 500:
-          errorMessage = '服务器内部错误';
+          errorMessage = (error.response.data as any)?.msg || '服务器内部错误';
+          console.error('[500 Error Details]', error.response.data);
           break;
         case 502:
           errorMessage = '网关错误';

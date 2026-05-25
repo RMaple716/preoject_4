@@ -75,7 +75,8 @@ async def update_itinerary(itinerary_id: str, request: ItineraryUpdateRequest, d
         updates["title"] = request.title
     
     if request.day_plans is not None:
-        updates["day_plans"] = [day.model_dump() for day in request.day_plans]
+        # day_plans已经是字典数组,直接使用
+        updates["day_plans"] = request.day_plans
     
     if request.status is not None:
         updates["status"] = request.status
@@ -93,6 +94,7 @@ async def update_itinerary(itinerary_id: str, request: ItineraryUpdateRequest, d
             "itinerary_id": itinerary.itinerary_id,
             "title": itinerary.title,
             "status": itinerary.status,
+            "day_plans": itinerary.day_plans,
             "updated_at": itinerary.updated_at.isoformat() if itinerary.updated_at else None
         },
         msg="行程更新成功"

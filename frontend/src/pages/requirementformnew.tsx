@@ -86,17 +86,17 @@ const RequirementForm: React.FC = () => {
           travel_days: values.travel_days,
           total_budget: values.total_budget,
           travel_type: values.travel_type,
-          start_date: values.travel_date.format('YYYY-MM-DD'),
+          travel_date: values.travel_date.format('YYYY-MM-DD'),
           preferences: values.preferences
         }
       });
 
-      const responseData = response.data;
+      // response已经是完整的响应对象，不需要再访问.data
       
-      if (responseData.code === 200) {
+      if (response.code === 200) {
         message.success('✅ 需求提交成功！');
 
-        const requirementId = responseData.data.requirement_id;
+        const requirementId = response.data.requirement_id;
 
         // 自动进行任务分解
         message.loading({ content: '正在智能规划行程...', key: 'decompose', duration: 0 });
@@ -120,16 +120,19 @@ const RequirementForm: React.FC = () => {
         const decomposeData = await decomposeResponse.json();
         message.destroy('decompose');
 
+        console.log('任务分解响应:', decomposeData);
+
         if (decomposeData.code === 200) {
           message.success('🎉 任务分解成功！正在生成专属行程...');
           setTimeout(() => {
             navigate(`/task/${decomposeData.data.task_id}`);
           }, 1500);
         } else {
+          console.error('任务分解失败:', decomposeData);
           message.error(decomposeData.msg || '任务分解失败');
         }
       } else {
-        message.error(responseData.msg || '提交失败');
+        message.error(response.msg || '提交失败');
       }
     } catch (error) {
       console.error('提交失败:', error);

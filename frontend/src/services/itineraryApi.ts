@@ -19,7 +19,7 @@ export interface Itinerary {
   travel_days: number;
   total_budget?: number;
   day_plans?: DayPlan[];
-  status?: string; // draft/completed/archived
+  status?: string; // draft/saved/published
   created_at?: string;
   updated_at?: string;
 }

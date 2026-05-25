@@ -14,7 +14,7 @@ export interface Attraction {
   attraction_id: string;
   name: string;
   city_name: string;
-  location: string;
+  location?: string;
   description?: string;
   recommended_duration?: string;
   visit_time_slot?: 'morning' | 'afternoon' | 'evening';
@@ -67,7 +67,7 @@ export interface Hotel {
   hotel_id: string;
   name: string;
   city_name: string;
-  location: string;
+  location?: string;
   price_per_night?: number;
   rating?: number;
   amenities?: string[];
@@ -91,7 +91,7 @@ export interface Restaurant {
   restaurant_id: string;
   name: string;
   city_name: string;
-  location: string;
+  location?: string;
   cuisine_type?: string;
   avg_price?: number;
   rating?: number;

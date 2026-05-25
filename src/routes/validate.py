@@ -447,9 +447,9 @@ def check_itinerary_conflicts(day_plans: List[Dict[str, Any]], structured_requir
                 "duration": transport.get("duration", "1小时"),
                 "activity_type": "transport",
                 "location": "",
-                "cost": transport.get("cost", 0)
+                "cost": transport.get("price", 0)
             })
-            total_cost += transport.get("cost", 0)
+            total_cost += transport.get("price", 0)
         
         # 对该天的活动进行时间冲突检测
         if daily_activities:

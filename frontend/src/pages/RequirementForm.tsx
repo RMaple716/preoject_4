@@ -88,11 +88,13 @@ const RequirementForm: React.FC = () => {
       const response = await requirementApi.submit({
         user_id: userId,
         requirement: {
+          user_id: userId,  // 添加user_id到需求中
           city_name: requirement.city_name,
           travel_days: requirement.travel_days,
           total_budget: requirement.total_budget,
           travel_type: requirement.travel_type,
-          start_date: requirement.travel_date,
+          travel_date: requirement.travel_date,
+          traveler_count: requirement.traveler_count,
           preferences: requirement.preferences,
         }
       });

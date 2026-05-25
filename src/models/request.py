@@ -12,7 +12,7 @@ class UserRequirement(BaseModel):
     travel_days: int = Field(..., ge=1, le=30, description="出行天数")
     total_budget: Optional[float] = Field(None, ge=0, description="总预算（元）")
     travel_type: Optional[str] = Field(None, description="出行类型: family/couple/friends/solo/business")
-    start_date: Optional[str] = Field(None, description="出发日期 YYYY-MM-DD")
+    travel_date: Optional[str] = Field(None, description="出发日期 YYYY-MM-DD")
     preferences: Optional[List[str]] = Field(default_factory=list, description="用户偏好标签")
 
 
@@ -183,7 +183,7 @@ class ItineraryCreateRequest(BaseModel):
 class ItineraryUpdateRequest(BaseModel):
     """更新行程请求"""
     title: Optional[str] = None
-    day_plans: Optional[List[DayPlan]] = None
+    day_plans: Optional[List[Dict[str, Any]]] = None  # 改为支持字典数组
 
 
 class ItineraryResponse(BaseModel):

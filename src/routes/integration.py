@@ -222,11 +222,12 @@ def integrate_agent_results_to_daily_plans(
             )
             
             day_transport = {
+                "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
                 "from": from_attr.get("name", ""),
                 "to": to_attr.get("name", ""),
-                "mode": "transit",
+                "type": "transit",
                 "duration": f"{transport_time}分钟",
-                "cost": 5.0,  # 默认交通费
+                "price": 5.0,  # 默认交通费
                 "departure_time": "11:30"  # 上午景点结束后出发
             }
         
