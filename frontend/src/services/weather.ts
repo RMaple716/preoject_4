@@ -1,7 +1,7 @@
 /**
  * 天气API服务
  */
-import { apiClient } from './api';
+import apiClient from './api';
 
 export interface CurrentWeather {
   province: string;
@@ -44,7 +44,7 @@ export const weatherApi = {
     const response = await apiClient.get<{ data: CurrentWeather }>('/weather/current', {
       params: { city }
     });
-    return response.data;
+    return response.data.data;
   },
 
   /**
@@ -54,6 +54,6 @@ export const weatherApi = {
     const response = await apiClient.get<{ data: WeatherForecast }>('/weather/forecast', {
       params: { city }
     });
-    return response.data;
+    return response.data.data;
   }
 };

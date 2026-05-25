@@ -161,8 +161,27 @@ class TravelExtractor:
 
         if not attraction:
             # 最后尝试：活动类短语本身（长度合理）
+            # 但要排除天数表达（如"一天"、"三天"、"2天"等）
+            # 以及包含天数的混合短语（如"故宫玩三天"）
+            days_pattern = re.compile(r'^[一二两三四五六七八九十\d]+\s*天$')
+            mixed_pattern = re.compile(r'(.+?)(?:玩|待|游)\s*[一二两三四五六七八九十\d]+\s*天')  # ✅ 新增：匹配混合短语
+            
             for phrase in reversed(attraction_candidates):
                 if phrase and phrase not in self.stop_dest and 1 < len(phrase) <= 10 and phrase != city:
+                    # ✅ 排除纯天数表达
+                    if days_pattern.match(phrase):
+                        continue
+                    
+                    # ✅ 处理混合短语：从"故宫玩三天"中提取"故宫"
+                    mixed_match = mixed_pattern.match(phrase)
+                    if mixed_match:
+                        potential_attraction = mixed_match.group(1).strip()
+                        if potential_attraction and len(potential_attraction) >= 2:
+                            attraction = potential_attraction
+                            break
+                        continue
+                    
+                    # 普通短语，直接使用
                     attraction = phrase
                     break
 
@@ -176,21 +195,64 @@ class TravelExtractor:
 
         # 预算
         budget = None
-        budget_match = re.search(r'(\d+)\s*[元块]|预算\s*(\d+)|(\d+)\s*[k千]|(\d+)\s*万', text)
-        if budget_match:
-            num_str = next(g for g in budget_match.groups() if g is not None)
-            budget = int(num_str)
-            if '万' in budget_match.group():
-                budget *= 10000
-            elif 'k' in budget_match.group().lower() or '千' in budget_match.group():
-                budget *= 1000
-        else:
-            cn_match = re.search(r'([一二两三四五六七八九十百千万亿零]+)\s*[元块]|预算\s*([一二两三四五六七八九十百千万亿零]+)', text)
-            if cn_match:
-                cn_num = cn_match.group(1) or cn_match.group(2)
-                parsed = self._parse_chinese_number(cn_num)
-                if parsed:
-                    budget = parsed
+        # 支持多种预算表达方式
+        budget_patterns = [
+            r'预算[是:：]?\s*(\d+)',           # "预算是2000"、"预算:2000"
+            r'(\d+)\s*[元块]',                 # "2000元"、"2000块"
+            r'(\d+)\s*[k千]',                  # "2k"、"2千"
+            r'(\d+)\s*万',                     # "1万"
+            r'([一二两三四五六七八九十百千万]+)\s*[元块]',  # "两千块"
+            r'预算[是:：]?\s*([一二两三四五六七八九十百千万]+)',  # "预算是两千"
+        ]
+        
+        for pat in budget_patterns:
+            budget_match = re.search(pat, text)
+            if budget_match:
+                num_str = budget_match.group(1)
+                # 处理中文数字
+                cn_digit_map = {"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,"百":100,"千":1000,"万":10000}
+                
+                # 判断是否是中文数字
+                if any(cn in num_str for cn in cn_digit_map.keys()):
+                    # 简单处理：如果是纯中文数字
+                    if num_str in cn_digit_map:
+                        budget = cn_digit_map[num_str]
+                    elif '千' in num_str:
+                        # 如"两千"
+                        base = num_str.replace('千', '')
+                        if base in cn_digit_map:
+                            budget = cn_digit_map[base] * 1000
+                        else:
+                            try:
+                                budget = int(base) * 1000
+                            except:
+                                budget = None
+                    elif '万' in num_str:
+                        base = num_str.replace('万', '')
+                        if base in cn_digit_map:
+                            budget = cn_digit_map[base] * 10000
+                        else:
+                            try:
+                                budget = int(base) * 10000
+                            except:
+                                budget = None
+                    else:
+                        parsed = self._parse_chinese_number(num_str)
+                        budget = parsed
+                else:
+                    # 阿拉伯数字
+                    try:
+                        budget = int(num_str)
+                        # 检查是否有单位
+                        if 'k' in pat.lower() or '千' in pat:
+                            budget *= 1000
+                        elif '万' in pat:
+                            budget *= 10000
+                    except ValueError:
+                        budget = None
+                
+                if budget is not None:
+                    break
 
         # 出行方式
         transport = None
@@ -199,12 +261,16 @@ class TravelExtractor:
                 transport = value
                 break
 
-        # 出发时间
+        # 出发时间（注意：必须将"大后天"放在"后天"前面，避免部分匹配）
         depart_time = None
         time_patterns = [
-            r'(明天|后天|下周[一二三四五六日]|下个月|下星期|周末)',
+            r'(大后天)',                    # ✅ 优先匹配"大后天"
+            r'(明天|后天)',                 # 再匹配"明天"和"后天"
+            r'(下周[一二三四五六日天])',
+            r'(下个月|下个星期|这周末|下周末|周末)',
             r'(\d{1,2}月\d{1,2}[日号])',
-            r'(\d{4}-\d{1,2}-\d{1,2})'
+            r'(\d{4}-\d{1,2}-\d{1,2})',
+            r'(\d{1,2}月\d{1,2}日?)'
         ]
         for pat in time_patterns:
             match = re.search(pat, text)
@@ -212,8 +278,10 @@ class TravelExtractor:
                 depart_time = match.group(1)
                 break
 
-        # 人数
+        # 人数（增强：支持"我"、"我和朋友"等语义表达）
         people = None
+        
+        # 1. 优先匹配明确的数字表达
         people_match = re.search(r'(\d+)\s*(个?人|位)', text)
         if people_match:
             people = int(people_match.group(1))
@@ -222,6 +290,43 @@ class TravelExtractor:
             if cn_people_match:
                 digit_map = {"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9}
                 people = digit_map.get(cn_people_match.group(1))
+        
+        # 2. 如果没有明确数字，尝试语义识别
+        if people is None:
+            # ✅ "我和朋友/同学/同事" → 2人
+            if re.search(r'我\s*和\s*(朋友|同学|同事|伙伴|对象|男朋|女朋|爱人|配偶)', text):
+                people = 2
+            # ✅ "我一个人"、"我自己"、"我想" → 1人
+            elif re.search(r'我\s*(一个)?人', text) or re.search(r'我\s*自己', text) or re.search(r'^\s*我想', text):
+                people = 1
+            # ✅ "我们" → 默认2人（可根据上下文调整）
+            elif '我们' in text and not re.search(r'我们\s*\d+', text):
+                people = 2
+
+        # 出行天数（新增）
+        travel_days = None
+        # 匹配"玩X天"、"X天"、"待X天"等表达
+        # 注意：必须先匹配带动词的，再匹配不带动词的，避免误匹配
+        days_patterns = [
+            r'玩\s*([一二两三四五六七八九十\d]+)\s*天',  # ✅ "玩一天"、"玩3天"
+            r'待\s*([一二两三四五六七八九十\d]+)\s*天',  # ✅ "待两天"
+            r'游\s*([一二两三四五六七八九十\d]+)\s*天',  # ✅ "游三天"
+            r'([一二两三四五六七八九十])\s*天',          # ✅ "一天"、"三天"（仅中文数字，避免误匹配）
+        ]
+        for pat in days_patterns:
+            days_match = re.search(pat, text)
+            if days_match:
+                day_str = days_match.group(1)
+                # 处理中文数字和阿拉伯数字
+                cn_digit_map = {"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10}
+                if day_str in cn_digit_map:
+                    travel_days = cn_digit_map[day_str]
+                else:
+                    try:
+                        travel_days = int(day_str)
+                    except ValueError:
+                        travel_days = None
+                break
 
         return {
             "city": city,
@@ -229,5 +334,6 @@ class TravelExtractor:
             "budget": budget,
             "transport": transport,
             "depart_time": depart_time,
-            "people": people
+            "people": people,
+            "travel_days": travel_days  # ✅ 新增返回
         }

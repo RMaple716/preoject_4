@@ -3,6 +3,7 @@ import { Form, Input, InputNumber, DatePicker, Select, Button, Card, message, Ro
 import { useNavigate } from 'react-router-dom';
 import { nlpApi, requirementApi } from '../services';
 import { NLPResponse } from '../services/nlp';
+import { parseNaturalDate } from '../utils/helpers';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 
@@ -10,7 +11,9 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 interface RequirementFormValues {
+  natural_language?: string;
   city_name: string;
+  attraction?: string;  // ✅ 新增景点字段
   travel_days: number;
   total_budget: number;
   travel_type: string;
@@ -42,21 +45,25 @@ const RequirementForm: React.FC = () => {
       if (result.city) {
         form.setFieldValue('city_name', result.city);
       }
+      if (result.attraction) {
+        form.setFieldValue('attraction', result.attraction);
+      }
       if (result.budget) {
         form.setFieldValue('total_budget', result.budget);
       }
       if (result.people) {
         form.setFieldValue('traveler_count', result.people);
       }
+      if (result.travel_days) {
+        form.setFieldValue('travel_days', result.travel_days);
+      }
       if (result.depart_time) {
-        // 尝试解析日期
-        try {
-          const date = dayjs(result.depart_time);
-          if (date.isValid()) {
-            form.setFieldValue('travel_date', date);
-          }
-        } catch (e) {
-          console.warn('日期解析失败:', e);
+        // 使用智能日期解析函数
+        const date = parseNaturalDate(result.depart_time);
+        if (date) {
+          form.setFieldValue('travel_date', date);
+        } else {
+          console.warn('无法解析日期:', result.depart_time);
         }
       }
 
@@ -84,10 +91,12 @@ const RequirementForm: React.FC = () => {
         }
       });
 
-      if (response.code === 200) {
+      const responseData = response.data;
+      
+      if (responseData.code === 200) {
         message.success('✅ 需求提交成功！');
 
-        const requirementId = response.data.requirement_id;
+        const requirementId = responseData.data.requirement_id;
 
         // 自动进行任务分解
         message.loading({ content: '正在智能规划行程...', key: 'decompose', duration: 0 });
@@ -120,7 +129,7 @@ const RequirementForm: React.FC = () => {
           message.error(decomposeData.msg || '任务分解失败');
         }
       } else {
-        message.error(response.msg || '提交失败');
+        message.error(responseData.msg || '提交失败');
       }
     } catch (error) {
       console.error('提交失败:', error);
@@ -145,7 +154,10 @@ const RequirementForm: React.FC = () => {
           }}
         >
           {/* 自然语言输入 */}
-          <Form.Item label="自然语言描述(可选)">
+          <Form.Item 
+            name="natural_language"
+            label="自然语言描述(可选)"
+          >
             <TextArea
               placeholder="例如:下周五去西安看兵马俑,两个人,预算两千五"
               rows={3}
@@ -163,7 +175,14 @@ const RequirementForm: React.FC = () => {
             </Button>
             <Button onClick={() => {
               setNlpResult(null);
-              form.resetFields(['natural_language']);
+              form.resetFields();
+              // ✅ 手动清空有默认值的字段
+              form.setFieldsValue({
+                travel_days: undefined,
+                traveler_count: undefined,
+                travel_type: undefined,
+                preferences: []
+              });
             }}>
               清除
             </Button>
@@ -171,14 +190,27 @@ const RequirementForm: React.FC = () => {
 
           <Divider>详细信息</Divider>
 
-          {/* 城市名称 */}
-          <Form.Item
-            name="city_name"
-            label="目的地城市"
-            rules={[{ required: true, message: '请输入目的地城市' }]}
-          >
-            <Input placeholder="例如:北京、上海、西安" />
-          </Form.Item>
+          {/* 目的地城市和景点 */}
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="city_name"
+                label="目的地城市"
+                rules={[{ required: true, message: '请输入目的地城市' }]}
+              >
+                <Input placeholder="例如:北京、上海、西安" />
+              </Form.Item>
+            </Col>
+
+            <Col span={12}>
+              <Form.Item
+                name="attraction"
+                label="目的地景点（可选）"
+              >
+                <Input placeholder="例如:兵马俑、故宫、西湖" />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Row gutter={16}>
             {/* 出行天数 */}

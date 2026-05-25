@@ -21,6 +21,7 @@ class NLPResponse(BaseModel):
     transport: Optional[str]
     depart_time: Optional[str]
     people: Optional[int]
+    travel_days: Optional[int]  # ✅ 新增出行天数字段
 
 @router.post("/extract", response_model=dict)
 async def extract_travel_info(request: NLPRequest):

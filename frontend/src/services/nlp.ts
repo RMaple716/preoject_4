@@ -1,7 +1,7 @@
 /**
  * 自然语言处理相关API
  */
-import { apiClient } from './api';
+import apiClient from './api';
 
 export interface NLPRequest {
   text: string;
@@ -16,6 +16,7 @@ export interface NLPResponse {
   transport?: string;
   depart_time?: string;
   people?: number;
+  travel_days?: number;  // ✅ 新增出行天数字段
 }
 
 export const nlpApi = {
