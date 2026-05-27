@@ -74,10 +74,11 @@ class TaskService:
     """任务管理服务"""
     
     @staticmethod
-    def create_task(db: Session, batch_id: str, requirement_id: str, agent_type: str, parameters: Dict[str, Any]) -> Task:
+    def create_task(db: Session, batch_id: str, requirement_id: str, agent_type: str, parameters: Dict[str, Any], task_id: str = None) -> Task:
         """创建新任务"""
         import uuid
-        task_id = str(uuid.uuid4())
+        if task_id is None:
+            task_id = str(uuid.uuid4())
         
         task = Task(
             task_id=task_id,
@@ -104,7 +105,8 @@ class TaskService:
                 batch_id=batch_id,
                 requirement_id=requirement_id,
                 agent_type=subtask["agent_type"],
-                parameters=subtask["parameters"]
+                parameters=subtask["parameters"],
+                task_id=subtask["subtask_id"]  # 传递预生成的subtask_id
             )
             tasks.append(task)
         

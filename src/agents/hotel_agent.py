@@ -103,7 +103,7 @@ class HotelAgent(BaseAgent):
         ]
 
         try:
-            response_content = await self.call_llm(messages, max_tokens=1500)
+            response_content = await self.call_llm(messages, max_tokens=2500)
             result = self._parse_json_response(response_content)
 
             processing_time = (time.time() - start_time) * 1000

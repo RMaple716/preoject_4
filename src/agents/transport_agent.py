@@ -1,8 +1,11 @@
 """
 交通推荐智能体
 """
-from typing import Dict, Any, List
+import time
+import uuid
+from typing import Dict, Any, List, Optional
 from .base_agent import BaseAgent
+from src.services.navigation_service import NavigationService
 
 class TransportAgent(BaseAgent):
     """交通推荐智能体"""
@@ -13,6 +16,7 @@ class TransportAgent(BaseAgent):
             name="交通规划助手",
             description="为用户提供交通方案推荐"
         )
+        self.navigation_service = NavigationService()
 
     def get_capabilities(self) -> List[str]:
         return [
@@ -24,90 +28,101 @@ class TransportAgent(BaseAgent):
 
     async def execute(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """执行交通推荐任务"""
-        import time
-        import uuid
+        import os
+        import logging
+
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(__name__)
 
         start_time = time.time()
         task_id = task_data.get("task_id", f"trans_{uuid.uuid4().hex[:8]}")
 
+        logger.info(f"[Transport] 开始执行任务 {task_id}")
+
         # 提取任务参数
         from_location = task_data.get("from_location", {})
         to_location = task_data.get("to_location", {})
-        mode_preference = task_data.get("mode_preference")  # walking/transit/driving
+        mode_preference = task_data.get("mode_preference", "driving")  # walking/transit/driving
 
-        # 构建系统提示词
-        system_prompt = """你是一个专业的交通规划助手。请为用户推荐合适的交通方案。
+        logger.info(f"[Transport] 任务参数 - 起点: {from_location}, 终点: {to_location}, 模式: {mode_preference}")
 
-要求：
-1. 提供详细的交通步骤
-2. 包含准确的距离和时间信息
-3. 考虑不同交通方式
-4. 提供实用建议
+        # 如果没有配置API密钥，返回模拟数据
+        if not os.getenv("AMAP_API_KEY"):
+            logger.warning("[Transport] 未配置API密钥，返回模拟数据")
+            return self._get_mock_data(task_id, from_location, to_location, start_time, None)
 
-返回格式：
-{
-  "transport_options": [
-    {
-      "transport_id": "trans_001",
-      "type": "flight/train/bus/subway/taxi",
-      "from": "起点名称",
-      "to": "终点名称",
-      "departure_time": "出发时间（HH:mm）",
-      "arrival_time": "到达时间（HH:mm）",
-      "duration": "预计时长（如：30分钟）",
-      "price": 价格（数字）
-    }
-  ]
-}"""
-
-        # 构建用户提示词
+        # 获取起点和终点的坐标或名称
         from_name = from_location.get("name", "")
         to_name = to_location.get("name", "")
-        mode_hint = f"优先使用{mode_preference}" if mode_preference else "推荐所有可用交通方式"
+        from_coords = from_location.get("coords", "")
+        to_coords = to_location.get("coords", "")
 
-        user_prompt = f"""请为以下行程推荐交通方案：
+        # 如果没有提供坐标，尝试通过地址获取坐标
+        if not from_coords and from_name:
+            logger.info(f"[Transport] 正在获取起点坐标: {from_name}")
+            from_coords = await self.navigation_service.geocode(from_name)
+            logger.info(f"[Transport] 起点坐标: {from_coords}")
+        if not to_coords and to_name:
+            logger.info(f"[Transport] 正在获取终点坐标: {to_name}")
+            to_coords = await self.navigation_service.geocode(to_name)
+            logger.info(f"[Transport] 终点坐标: {to_coords}")
 
-起点：{from_name}
-终点：{to_name}
-要求：{mode_hint}
+        # 优先使用坐标，如果没有则使用名称
+        origin = from_coords if from_coords else from_name
+        destination = to_coords if to_coords else to_name
 
-请提供2-3个不同的交通方案供用户选择。
-每个方案必须包含：
-- 唯一ID（transport_id，trans_xxx格式）
-- 交通类型（flight/train/bus/subway/taxi）
-- 起点名称
-- 终点名称
-- 出发时间（格式：HH:mm）
-- 到达时间（格式：HH:mm）
-- 预计时长
-- 价格"""
+        # 如果无法获取坐标，返回模拟数据
+        if not origin or not destination:
+            logger.warning(f"[Transport] 无法获取坐标 - 起点: {origin}, 终点: {destination}")
+            return self._get_mock_data(task_id, from_location, to_location, start_time, "无法获取地址坐标")
 
-        # 调用LLM
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-
+        # 调用导航API
         try:
-            response_content = await self.call_llm(messages, max_tokens=1500)
-            result = self._parse_json_response(response_content)
+            logger.info(f"[Transport] 调用导航API - 起点: {origin}, 终点: {destination}, 模式: {mode_preference}")
+            nav_result = await self.navigation_service.get_direction(
+                origin=origin,
+                destination=destination,
+                mode=mode_preference
+            )
+            logger.info(f"[Transport] API返回结果: {nav_result}")
 
-            processing_time = (time.time() - start_time) * 1000
+            if nav_result['status'] == 'success':
+                route_data = nav_result['data']
 
-            return {
-                "task_id": task_id,
-                "status": "success",
-                "data": {
-                    "items": result.get("transport_options", [])
-                },
-                "metadata": {
-                    "processing_time_ms": processing_time,
-                    "source": "ai_generated",
-                    "model_used": "deepseek-chat",
-                    "over_budget": False
-                },
-                "error_message": None
-            }
+                # 构建交通方案
+                transport_option = {
+                    "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
+                    "type": mode_preference,
+                    "from": from_name,
+                    "to": to_name,
+                    "distance": route_data['distance'],
+                    "distance_text": self.navigation_service.format_distance(route_data['distance']),
+                    "duration": route_data['duration'],
+                    "duration_text": self.navigation_service.format_duration(route_data['duration']),
+                    "steps": route_data['steps'],
+                    "polyline": route_data.get('polyline', '')
+                }
+
+                processing_time = (time.time() - start_time) * 1000
+
+                return {
+                    "task_id": task_id,
+                    "status": "success",
+                    "data": {
+                        "items": [transport_option]
+                    },
+                    "metadata": {
+                        "processing_time_ms": processing_time,
+                        "source": "api_generated",
+                        "model_used": "amap_navigation",
+                        "over_budget": False
+                    },
+                    "error_message": None
+                }
+            else:
+                # API调用失败，返回模拟数据
+                return self._get_mock_data(task_id, from_location, to_location, start_time, nav_result.get('message', '未知错误'))
+
         except Exception as e:
             processing_time = (time.time() - start_time) * 1000
             return {
@@ -116,9 +131,53 @@ class TransportAgent(BaseAgent):
                 "data": {"items": []},
                 "metadata": {
                     "processing_time_ms": processing_time,
-                    "source": "ai_generated",
-                    "model_used": "deepseek-chat",
+                    "source": "api_generated",
+                    "model_used": "amap_navigation",
                     "over_budget": False
                 },
                 "error_message": str(e)
             }
+
+    def _get_mock_data(self, task_id: str, from_location: Dict[str, Any], 
+                       to_location: Dict[str, Any], start_time: float, 
+                       error_msg: Optional[str] = None) -> Dict[str, Any]:
+        """返回模拟数据"""
+        from_name = from_location.get("name", "起点")
+        to_name = to_location.get("name", "终点")
+
+        mock_option = {
+            "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
+            "type": "driving",
+            "from": from_name,
+            "to": to_name,
+            "distance": 5000,
+            "distance_text": "5.0公里",
+            "duration": 900,
+            "duration_text": "15分钟",
+            "steps": [
+                {
+                    "instruction": f"从{from_name}出发",
+                    "distance": 5000,
+                    "duration": 900,
+                    "polyline": ""
+                }
+            ],
+            "polyline": ""
+        }
+
+        processing_time = (time.time() - start_time) * 1000
+
+        return {
+            "task_id": task_id,
+            "status": "success",
+            "data": {
+                "items": [mock_option]
+            },
+            "metadata": {
+                "processing_time_ms": processing_time,
+                "source": "mock_data",
+                "model_used": None,
+                "over_budget": False
+            },
+            "error_message": error_msg
+        }

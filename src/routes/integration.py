@@ -221,15 +221,62 @@ def integrate_agent_results_to_daily_plans(
                 to_attr.get("location", {})
             )
             
-            day_transport = {
-                "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
-                "from": from_attr.get("name", ""),
-                "to": to_attr.get("name", ""),
-                "type": "transit",
-                "duration": f"{transport_time}分钟",
-                "price": 5.0,  # 默认交通费
-                "departure_time": "11:30"  # 上午景点结束后出发
-            }
+            # 尝试使用智能体返回的交通数据
+            if transport_data and len(transport_data) > 0:
+                # 查找匹配的交通选项
+                matched_transport = None
+                for transport in transport_data:
+                    transport_from = transport.get("from", "")
+                    transport_to = transport.get("to", "")
+                    from_name = from_attr.get("name", "")
+                    to_name = to_attr.get("name", "")
+
+                    # 模糊匹配起点和终点
+                    if (transport_from in from_name or from_name in transport_from) and                        (transport_to in to_name or to_name in transport_to):
+                        matched_transport = transport
+                        break
+
+                if matched_transport:
+                    day_transport = matched_transport.copy()
+                    # 确保有必要的字段
+                    if "transport_id" not in day_transport:
+                        day_transport["transport_id"] = f"trans_{uuid.uuid4().hex[:8]}"
+                    if "price" not in day_transport:
+                        day_transport["price"] = 5.0
+                    if "departure_time" not in day_transport:
+                        day_transport["departure_time"] = "11:30"
+                else:
+                    # 没有匹配的交通数据，创建默认的交通信息
+                    day_transport = {
+                        "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
+                        "from": from_attr.get("name", ""),
+                        "to": to_attr.get("name", ""),
+                        "type": "transit",
+                        "duration": f"{transport_time}分钟",
+                        "duration_text": f"{transport_time}分钟",
+                        "distance": 5000,
+                        "distance_text": "5.0公里",
+                        "price": 5.0,
+                        "departure_time": "11:30",
+                        "steps": [],
+                        "polyline": ""
+                    }
+            else:
+                # 没有交通数据，创建默认的交通信息
+                day_transport = {
+                    "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
+                    "from": from_attr.get("name", ""),
+                    "to": to_attr.get("name", ""),
+                    "type": "transit",
+                    "duration": f"{transport_time}分钟",
+                    "duration_text": f"{transport_time}分钟",
+                    "distance": 5000,
+                    "distance_text": "5.0公里",
+                    "price": 5.0,
+                    "departure_time": "11:30",
+                    "steps": [],
+                    "polyline": ""
+                }
         
         # 添加住宿信息（仅第一天或需要换酒店时）
         day_hotel = None

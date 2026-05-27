@@ -3,6 +3,7 @@
 """
 from typing import Dict, Any, List
 from .base_agent import BaseAgent
+from src.services.weather_service import WeatherService
 
 class AttractionsAgent(BaseAgent):
     """景点推荐智能体"""
@@ -13,6 +14,7 @@ class AttractionsAgent(BaseAgent):
             name="景点推荐助手",
             description="基于用户偏好推荐合适的旅游景点"
         )
+        self.weather_service = WeatherService()
 
     def get_capabilities(self) -> List[str]:
         return [
@@ -39,19 +41,43 @@ class AttractionsAgent(BaseAgent):
         dislikes = task_data.get("dislikes", [])
         location_preference = task_data.get("location_preference")
         traveler_count = task_data.get("traveler_count", 1)
+        travel_date = task_data.get("travel_date", "")  # 获取旅行日期
+
+        # 获取天气信息
+        weather_info = None
+        if city_name:
+            try:
+                # 获取天气预报信息
+                weather_response = await self.weather_service.get_weather(city_name, extensions="all")
+                if weather_response.get("status") == "success":
+                    forecasts = weather_response.get("data", [])
+                    if forecasts and len(forecasts) > 0:
+                        available_forecasts = forecasts[0].get("casts", [])
+                        # 高德天气API通常只提供4天预报
+                        available_days = min(len(available_forecasts), travel_days) if travel_days else len(available_forecasts)
+                        weather_info = {
+                            "city": city_name,
+                            "forecasts": available_forecasts[:available_days],
+                            "available_days": available_days,
+                            "total_days": travel_days
+                        }
+            except Exception as e:
+                print(f"获取天气信息失败: {str(e)}")
 
         # 如果没有配置API密钥，返回模拟数据
         if not os.getenv("DEEPSEEK_API_KEY"):
-            return self._get_mock_data(task_id, city_name, travel_days, start_time)
+            return self._get_mock_data(task_id, city_name, travel_days, start_time, weather_info)
 
         # 构建系统提示词
-        system_prompt = """你是一个专业的景点推荐助手。请根据用户需求推荐合适的旅游景点。
+        system_prompt = """你是一个专业的景点推荐助手。请根据用户需求和天气情况推荐合适的旅游景点。
 
 要求：
 1. 推荐的景点要符合用户偏好和预算
-2. 合理安排游览时间
+2. 合理安排游览时间，根据天气情况调整室内外景点的比例
 3. 提供准确的费用信息
 4. 包含实用信息（位置、最佳游览时间等）
+5. 如果天气不佳（如雨天），优先推荐室内景点
+6. 如果天气良好，可以适当增加户外景点
 
 返回格式：
 {
@@ -73,6 +99,23 @@ class AttractionsAgent(BaseAgent):
 }"""
 
         # 构建用户提示词
+        # 添加天气信息到提示词
+        weather_text = ""
+        if weather_info and weather_info.get("forecasts"):
+            weather_text = "\n天气预报信息：\n"
+            available_days = weather_info.get("available_days", 0)
+            total_days = weather_info.get("total_days", 0)
+
+            for i, forecast in enumerate(weather_info["forecasts"]):
+                date = forecast.get("date", "")
+                day_weather = forecast.get("dayweather", "")
+                night_weather = forecast.get("nightweather", "")
+                temperature = f"{forecast.get('daytemp', '')}°C/{forecast.get('nighttemp', '')}°C"
+                weather_text += f"第{i+1}天 ({date}): 白天{day_weather}, 夜间{night_weather}, 温度{temperature}\n"
+
+            if total_days > available_days:
+                weather_text += f"\n注意：仅获取到前{available_days}天的天气预报，第{available_days+1}天至第{total_days}天请根据季节和城市特点合理推测天气情况。\n"
+
         user_prompt = f"""请为以下旅行需求推荐景点：
 
 目的地：{city_name}
@@ -81,7 +124,7 @@ class AttractionsAgent(BaseAgent):
 偏好：{', '.join(preferences) if preferences else '无特殊偏好'}
 不喜欢的：{', '.join(dislikes) if dislikes else '无'}
 区域偏好：{location_preference if location_preference else '无特殊要求'}
-旅行人数：{traveler_count}人
+旅行人数：{traveler_count}人{weather_text}
 
 请推荐{travel_days * 3}个左右的景点，确保每天有合理的游览安排。
 每个景点必须包含：
@@ -104,8 +147,15 @@ class AttractionsAgent(BaseAgent):
         ]
 
         try:
-            response_content = await self.call_llm(messages, max_tokens=2000)
-            result = self._parse_json_response(response_content)
+            # 根据旅行天数决定是否分批生成
+            # 超过7天时采用分批策略，避免JSON被截断
+            if travel_days > 7:
+                result = await self._generate_attractions_in_batches(
+                    task_data, weather_info, system_prompt, user_prompt
+                )
+            else:
+                response_content = await self.call_llm(messages, max_tokens=4000)
+                result = self._parse_json_response(response_content)
 
             processing_time = (time.time() - start_time) * 1000
 
@@ -138,9 +188,18 @@ class AttractionsAgent(BaseAgent):
                 "error_message": str(e)
             }
 
-    def _get_mock_data(self, task_id: str, city_name: str, travel_days: int, start_time: float) -> Dict[str, Any]:
+    def _get_mock_data(self, task_id: str, city_name: str, travel_days: int, start_time: float, weather_info: Dict[str, Any] = None) -> Dict[str, Any]:
         """生成模拟景点数据"""
         import time
+        
+        # 根据天气情况调整景点推荐
+        weather_adjustment = ""
+        if weather_info and weather_info.get("forecasts"):
+            first_day_weather = weather_info["forecasts"][0].get("dayweather", "")
+            if "雨" in first_day_weather or "雪" in first_day_weather:
+                weather_adjustment = " (天气不佳，推荐室内景点)"
+            elif "晴" in first_day_weather or "多云" in first_day_weather:
+                weather_adjustment = " (天气良好，适合户外活动)"
 
         # 根据城市名称生成不同的景点
         city_attractions = {
@@ -205,3 +264,156 @@ class AttractionsAgent(BaseAgent):
             },
             "error_message": None
         }
+
+    async def _generate_attractions_in_batches(
+        self,
+        task_data: Dict[str, Any],
+        weather_info: Dict[str, Any],
+        system_prompt: str,
+        user_prompt: str
+    ) -> Dict[str, Any]:
+        """
+        分批生成景点推荐，用于长时间旅行规划
+
+        Args:
+            task_data: 任务数据
+            weather_info: 天气信息
+            system_prompt: 系统提示词
+            user_prompt: 用户提示词
+
+        Returns:
+            包含所有景点推荐的字典
+        """
+        travel_days = task_data.get("travel_days", 1)
+        city_name = task_data.get("city_name", "")
+        preferences = task_data.get("preferences", [])
+        dislikes = task_data.get("dislikes", [])
+        ticket_budget = task_data.get("ticket_budget")
+        traveler_count = task_data.get("traveler_count", 1)
+        location_preference = task_data.get("location_preference")
+
+        # 计算需要的景点总数
+        total_attractions = travel_days * 3
+
+        # 分批策略：每批生成5天的景点（最多15个景点）
+        batch_days = 5
+        all_attractions = []
+
+        # 构建基础提示词（不包含天数）
+        base_user_prompt = f"""目的地：{city_name}
+门票预算：{ticket_budget}元（如未指定则不考虑预算）
+偏好：{', '.join(preferences) if preferences else '无特殊偏好'}
+不喜欢的：{', '.join(dislikes) if dislikes else '无'}
+区域偏好：{location_preference if location_preference else '无特殊要求'}
+旅行人数：{traveler_count}人"""
+
+        # 添加天气信息
+        weather_text = ""
+        if weather_info and weather_info.get("forecasts"):
+            weather_text = "\n天气预报信息：\n"
+            available_days = weather_info.get("available_days", 0)
+            total_days = weather_info.get("total_days", 0)
+
+            for i, forecast in enumerate(weather_info["forecasts"]):
+                date = forecast.get("date", "")
+                day_weather = forecast.get("dayweather", "")
+                night_weather = forecast.get("nightweather", "")
+                temperature = f"{forecast.get('daytemp', '')}°C/{forecast.get('nighttemp', '')}°C"
+                weather_text += f"第{i+1}天 ({date}): 白天{day_weather}, 夜间{night_weather}, 温度{temperature}\n"
+
+            if total_days > available_days:
+                weather_text += f"\n注意：仅获取到前{available_days}天的天气预报，第{available_days+1}天至第{total_days}天请根据季节和城市特点合理推测天气情况。\n"
+
+        base_user_prompt += weather_text
+
+        # 分批生成
+        current_day = 1
+        batch_num = 1
+
+        while current_day <= travel_days:
+            # 计算当前批次的结束天数
+            end_day = min(current_day + batch_days - 1, travel_days)
+            batch_travel_days = end_day - current_day + 1
+
+            # 构建当前批次的提示词
+            batch_user_prompt = f"""{base_user_prompt}
+
+本次规划：第{current_day}天至第{end_day}天（共{batch_travel_days}天）
+
+请为这{batch_travel_days}天推荐{batch_travel_days * 3}个左右的景点。
+每个景点必须包含：
+- 唯一ID（attraction_id，att_xxx格式）
+- 景点名称
+- 城市名称（与目的地一致）
+- 景点地址（详细地址）
+- 景点描述（简要介绍）
+- 建议游览时长
+- 建议游览时段（morning/afternoon/evening）
+- 门票价格
+- 评分（0-5）
+- 营业时间
+- 标签
+
+注意：这是第{batch_num}批推荐，请确保与之前推荐的景点不重复。"""
+
+            # 调用LLM生成当前批次的景点
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": batch_user_prompt}
+            ]
+
+            try:
+                response_content = await self.call_llm(messages, max_tokens=4000)
+                batch_result = self._parse_json_response(response_content)
+                batch_attractions = batch_result.get("attractions", [])
+
+                # 更新景点的day_index，标记它们属于哪一天
+                for attraction in batch_attractions:
+                    attraction["day_index"] = current_day
+
+                all_attractions.extend(batch_attractions)
+
+                # 如果当前批次没有返回足够的景点，补充默认景点
+                expected_count = batch_travel_days * 3
+                if len(batch_attractions) < expected_count:
+                    # 添加一些默认景点作为补充
+                    for i in range(expected_count - len(batch_attractions)):
+                        all_attractions.append({
+                            "attraction_id": f"att_default_{len(all_attractions) + 1}",
+                            "name": f"{city_name}特色景点{len(all_attractions) + 1}",
+                            "city_name": city_name,
+                            "location": f"{city_name}市区",
+                            "description": "待探索的特色景点",
+                            "recommended_duration": "3小时",
+                            "visit_time_slot": "afternoon",
+                            "ticket_price": 50,
+                            "rating": 4.0,
+                            "opening_hours": "9:00-17:00",
+                            "tags": ["待探索"],
+                            "day_index": current_day
+                        })
+
+            except Exception as e:
+                print(f"第{batch_num}批景点生成失败: {str(e)}")
+                # 如果生成失败，添加默认景点
+                for i in range(batch_travel_days * 3):
+                    all_attractions.append({
+                        "attraction_id": f"att_default_{len(all_attractions) + 1}",
+                        "name": f"{city_name}特色景点{len(all_attractions) + 1}",
+                        "city_name": city_name,
+                        "location": f"{city_name}市区",
+                        "description": "待探索的特色景点",
+                        "recommended_duration": "3小时",
+                        "visit_time_slot": "afternoon",
+                        "ticket_price": 50,
+                        "rating": 4.0,
+                        "opening_hours": "9:00-17:00",
+                        "tags": ["待探索"],
+                        "day_index": current_day
+                    })
+
+            # 移动到下一批次
+            current_day = end_day + 1
+            batch_num += 1
+
+        return {"attractions": all_attractions}

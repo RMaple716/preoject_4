@@ -8,6 +8,15 @@ export interface DayPlan {
   hotel?: any;
   meals?: any[];
   notes?: string;
+  weather?: {
+    date?: string;
+    dayweather?: string;
+    nightweather?: string;
+    daytemp?: string;
+    nighttemp?: string;
+    daywind?: string;
+    nightwind?: string;
+  };
 }
 
 export interface Itinerary {

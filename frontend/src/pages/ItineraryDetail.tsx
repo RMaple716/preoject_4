@@ -28,7 +28,6 @@ import {
   CalendarOutlined,
   DollarOutlined,
   ClockCircleOutlined,
-  CarOutlined,
   HomeOutlined,
   RestOutlined,
   CameraOutlined,
@@ -39,8 +38,10 @@ import {
   SaveOutlined
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
-import { itineraryApi, Itinerary, DayPlan } from '../services/itineraryApi';
+import { itineraryApi, Itinerary } from '../services/itineraryApi';
 import dayjs from 'dayjs';
+import WeatherInfo from '../components/weatherinfo';
+import TransportInfo from '../components/transportinfo';
 
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
@@ -236,7 +237,7 @@ const MealForm: React.FC<{
       </Form.Item>
       
       <Form.Item
-        name="price_per_person"
+        name="avg_price"
         label="人均价格（元）"
       >
         <InputNumber min={0} style={{ width: '100%' }} placeholder="0" />
@@ -385,9 +386,9 @@ const MealCard: React.FC<{
             {meal.meal_time}
           </Tag>
         )}
-        {meal.price_per_person && (
+        {meal.avg_price && (
           <Tag icon={<DollarOutlined />} color="green">
-            ¥{meal.price_per_person}/人
+            ¥{meal.avg_price}/人
           </Tag>
         )}
       </Space>
@@ -395,34 +396,7 @@ const MealCard: React.FC<{
   </Card>
 );
 
-// 交通信息组件
-const TransportInfo: React.FC<{ transport: any }> = ({ transport }) => (
-  <Card 
-    size="small"
-    style={{ marginBottom: 8, backgroundColor: '#f0f5ff' }}
-    bodyStyle={{ padding: '12px' }}
-  >
-    <Space direction="vertical" size="small" style={{ width: '100%' }}>
-      <Text strong><CarOutlined /> 交通安排</Text>
-      {transport.mode && (
-        <Text>方式：{transport.mode}</Text>
-      )}
-      {transport.from_location && transport.to_location && (
-        <Text>
-          {transport.from_location} → {transport.to_location}
-        </Text>
-      )}
-      {transport.duration && (
-        <Text type="secondary">时长：{transport.duration}</Text>
-      )}
-      {transport.cost && (
-        <Text type="secondary">费用：¥{transport.cost}</Text>
-      )}
-    </Space>
-  </Card>
-);
-
-// 住宿信息组件
+//住宿信息组件
 const HotelInfo: React.FC<{ hotel: any }> = ({ hotel }) => (
   <Card 
     size="small"
@@ -480,6 +454,14 @@ const DayPlanContent: React.FC<{
   onEditNotes
 }) => {
   const timelineItems = [];
+
+  // 添加天气信息（如果有）
+  if (dayPlan.weather) {
+    timelineItems.push({
+      color: 'cyan',
+      children: <WeatherInfo weather={dayPlan.weather} />
+    });
+  }
 
   // 添加交通（如果有）
   if (dayPlan.transport) {
@@ -667,10 +649,10 @@ const ItineraryDetail: React.FC = () => {
       setLoading(true);
       const response = await itineraryApi.getById(itineraryId);
       
-      if (response.code === 200) {
-        setItinerary(response.data);
+      if ((response as any).code === 200) {
+        setItinerary((response as any).data);
       } else {
-        message.error(response.msg || '获取行程详情失败');
+        message.error((response as any).msg || '获取行程详情失败');
       }
     } catch (error) {
       console.error('获取行程详情失败:', error);
@@ -691,11 +673,11 @@ const ItineraryDetail: React.FC = () => {
         day_plans: itinerary.day_plans,
       });
       
-      if (response.code === 200) {
+      if ((response as any).code === 200) {
         message.success('保存成功');
-        setItinerary(response.data);
+        setItinerary((response as any).data);
       } else {
-        message.error(response.msg || '保存失败');
+        message.error((response as any).msg || '保存失败');
       }
     } catch (error) {
       console.error('保存失败:', error);
@@ -875,11 +857,11 @@ const ItineraryDetail: React.FC = () => {
     
     try {
       const response = await itineraryApi.delete(id);
-      if (response.code === 200) {
+      if ((response as any).code === 200) {
         message.success('行程已删除');
         navigate('/itineraries');
       } else {
-        message.error(response.msg || '删除失败');
+        message.error((response as any).msg || '删除失败');
       }
     } catch (error) {
       console.error('删除失败:', error);
@@ -1001,7 +983,7 @@ const ItineraryDetail: React.FC = () => {
               </Space>
             }
             style={{ marginBottom: 16 }}
-            headStyle={{ backgroundColor: '#fafafa' }}
+            styles={{ header: { backgroundColor: '#fafafa' } }}
           >
             <DayPlanContent 
               dayPlan={dayPlan} 

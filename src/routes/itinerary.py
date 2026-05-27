@@ -49,15 +49,47 @@ async def get_itinerary(itinerary_id: str, db: Session = Depends(get_db)):
     if not itinerary:
         return error_response(code=404, msg="行程不存在")
     
+    # 确保day_plans是有效的JSON数组
+    day_plans = itinerary.day_plans if isinstance(itinerary.day_plans, list) else []
+    
+    # 为每个day_plan添加必要的字段
+    for day_plan in day_plans:
+        # 确保attractions字段存在
+        if "attractions" not in day_plan:
+            day_plan["attractions"] = []
+        # 确保meals字段存在
+        if "meals" not in day_plan:
+            day_plan["meals"] = []
+        # 确保transport字段存在
+        if "transport" not in day_plan:
+            day_plan["transport"] = None
+        # 确保hotel字段存在
+        if "hotel" not in day_plan:
+            day_plan["hotel"] = None
+        # 确保weather字段存在
+        if "weather" not in day_plan:
+            day_plan["weather"] = None
+        # 确保notes字段存在
+        if "notes" not in day_plan:
+            day_plan["notes"] = ""
+    
+    # 获取关联的需求信息以获取城市名称和旅行天数
+    from src.models.db_models import UserRequirement
+    requirement = db.query(UserRequirement).filter(UserRequirement.requirement_id == itinerary.requirement_id).first()
+    city_name = requirement.requirement_data.get("city_name", "") if requirement else ""
+    travel_days = requirement.requirement_data.get("travel_days", 1) if requirement else 1
+
     return success_response(
         data={
             "itinerary_id": itinerary.itinerary_id,
             "user_id": itinerary.user_id,
             "requirement_id": itinerary.requirement_id,
             "title": itinerary.title,
+            "city_name": city_name,
+            "travel_days": travel_days,
             "total_budget": itinerary.total_budget,
             "actual_cost": itinerary.actual_cost,
-            "day_plans": itinerary.day_plans,
+            "day_plans": day_plans,
             "status": itinerary.status,
             "is_favorite": itinerary.is_favorite,
             "created_at": itinerary.created_at.isoformat() if itinerary.created_at else None,
