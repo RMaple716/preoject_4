@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from src.database import get_db
 from src.models.response import success_response, error_response
@@ -10,6 +10,7 @@ from src.models.request import TaskDispatchRequest, TaskDispatchResponse, TaskIn
 from src.services.database_service import TaskService, RequirementService
 
 router = APIRouter(prefix="/api/v1/task", tags=["任务分发"])
+requirements_store = {}  # 用于存储需求信息，实际应从数据库获取
 
 # ============== 任务分解核心逻辑 ==============
 
@@ -21,7 +22,7 @@ def calculate_budget_allocation(total_budget: float, travel_days: int, traveler_
     if not total_budget:
         # 如果未指定总预算，按每人每天500元估算
         total_budget = traveler_count * travel_days * 500
-    
+
     return {
         "accommodation_budget": round(total_budget * 0.30, 2),
         "food_budget": round(total_budget * 0.25, 2),
@@ -34,34 +35,34 @@ def calculate_budget_allocation(total_budget: float, travel_days: int, traveler_
 def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     将结构化需求拆分为各智能体的子任务
-    
+
     Args:
         requirement_id: 需求ID
         structured_requirement: 结构化需求对象
-    
+
     Returns:
         子任务列表
     """
     # 提取基本信息
-    city_name = structured_requirement.get("city_name", "")
-    travel_days = structured_requirement.get("travel_days", 1)
-    total_budget = structured_requirement.get("total_budget")
-    travel_date = structured_requirement.get("travel_date", "")
-    traveler_count = structured_requirement.get("traveler_count", 1)
-    preferences = structured_requirement.get("preferences", [])
-    dislikes = structured_requirement.get("dislikes", [])
-    
+    city_name = str(structured_requirement.get("city_name", ""))
+    travel_days = int(structured_requirement.get("travel_days", 1) or 1)
+    total_budget = float(structured_requirement.get("total_budget", 0) or 0)
+    travel_date = str(structured_requirement.get("travel_date", ""))
+    traveler_count = int(structured_requirement.get("traveler_count", 1) or 1)
+    preferences = list(structured_requirement.get("preferences", []))
+    dislikes = list(structured_requirement.get("dislikes", []))
+
     # 计算预算分配
     budget_allocation = calculate_budget_allocation(total_budget, travel_days, traveler_count)
-    
+
     # 如果用户指定了具体预算，则使用用户的值
     accommodation_budget = structured_requirement.get("accommodation_budget") or budget_allocation["accommodation_budget"]
     food_budget = structured_requirement.get("food_budget") or budget_allocation["food_budget"]
     transport_budget = structured_requirement.get("transport_budget") or budget_allocation["transport_budget"]
     ticket_budget = structured_requirement.get("ticket_budget") or budget_allocation["ticket_budget"]
-    
+
     subtasks = []
-    
+
     # 1. 景点智能体子任务
     attraction_subtask_id = str(uuid.uuid4())
     attraction_params = {
@@ -70,7 +71,8 @@ def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str,
         "preferences": preferences,
         "dislikes": dislikes,
         "ticket_budget": ticket_budget,
-        "traveler_count": traveler_count
+        "traveler_count": traveler_count,
+        "travel_date": travel_date  # 添加旅行日期，用于获取天气信息
     }
     subtasks.append({
         "subtask_id": attraction_subtask_id,
@@ -79,13 +81,13 @@ def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str,
         "status": "pending",
         "result": None
     })
-    
+
     # 2. 住宿智能体子任务
     accommodation_subtask_id = str(uuid.uuid4())
     # 计算入住和退房日期
     check_in_date = travel_date if travel_date else datetime.now().strftime("%Y-%m-%d")
-    check_out_date = (datetime.strptime(check_in_date, "%Y-%m-%d") + timedelta(days=travel_days)).strftime("%Y-%m-%d")
-    
+    check_out_date = (datetime.strptime(check_in_date, "%Y-%m-%d") + timedelta(days=int(travel_days))).strftime("%Y-%m-%d")
+
     accommodation_params = {
         "city_name": city_name,
         "check_in_date": check_in_date,
@@ -102,16 +104,15 @@ def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str,
         "status": "pending",
         "result": None
     })
-    
+
     # 3. 美食智能体子任务
     food_subtask_id = str(uuid.uuid4())
     food_params = {
         "city_name": city_name,
         "travel_days": travel_days,
-        "budget_per_person": round(food_budget / (travel_days * 3 * traveler_count), 2) if travel_days > 0 and traveler_count > 0 else 100,
-        "cuisine_preference": "当地特色" if "美食" in preferences else None,
         "preferences": preferences,
-        "dislikes": dislikes
+        "budget_per_person": round(food_budget / (travel_days * traveler_count), 2) if travel_days > 0 and traveler_count > 0 else food_budget,
+        "traveler_count": traveler_count
     }
     subtasks.append({
         "subtask_id": food_subtask_id,
@@ -120,15 +121,16 @@ def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str,
         "status": "pending",
         "result": None
     })
-    
+
     # 4. 交通智能体子任务
     transport_subtask_id = str(uuid.uuid4())
     transport_params = {
         "city_name": city_name,
         "travel_days": travel_days,
         "budget": transport_budget,
-        "travel_date": travel_date,
-        "mode_preference": "transit"  # 默认公共交通
+        "mode_preference": "transit",
+        "from_location": {"name": f"{city_name}市中心"},
+        "to_location": {"name": f"{city_name}机场"}
     }
     subtasks.append({
         "subtask_id": transport_subtask_id,
@@ -137,17 +139,17 @@ def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str,
         "status": "pending",
         "result": None
     })
-    
+
     return subtasks
 
 
 # ============== API 路由 ==============
 
 @router.post("/decompose")
-async def decompose_task(request_data: Dict[str, Any], db: Session = Depends(get_db)):
+async def decompose_task(request_data: Dict[str, Any], background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     任务分解接口：将结构化需求拆分为各智能体的子任务
-    
+
     请求参数:
     {
         "requirement_id": "req_xxx",
@@ -156,42 +158,53 @@ async def decompose_task(request_data: Dict[str, Any], db: Session = Depends(get
     """
     requirement_id = request_data.get("requirement_id")
     structured_requirement = request_data.get("structured_requirement")
-    
+
     if not requirement_id or not structured_requirement:
         return error_response(code=400, msg="缺少必要参数：requirement_id 或 structured_requirement")
-    
+
     # 验证需求是否存在
     requirement = RequirementService.get_requirement(db, requirement_id)
     if not requirement:
         return error_response(code=404, msg="需求不存在")
-    
+
     # 验证必填字段
     required_fields = ["city_name", "travel_days", "total_budget", "travel_date", "traveler_count"]
     for field in required_fields:
         if field not in structured_requirement:
             return error_response(code=400, msg=f"缺少必填字段：{field}")
-    
+
     # 执行业务规则验证
-    travel_days = structured_requirement.get("travel_days", 0)
-    traveler_count = structured_requirement.get("traveler_count", 0)
-    total_budget = structured_requirement.get("total_budget", 0)
-    
+    travel_days = int(structured_requirement.get("travel_days", 0) or 0)
+    traveler_count = int(structured_requirement.get("traveler_count", 0) or 0)
+    total_budget = float(structured_requirement.get("total_budget", 0) or 0)
+
     if travel_days < 1 or travel_days > 30:
         return error_response(code=400001, msg="出行天数必须在1-30天之间")
-    
+
     if traveler_count < 1 or traveler_count > 20:
         return error_response(code=400, msg="出行人数必须在1-20人之间")
-    
+
     min_budget = traveler_count * 100
     if total_budget < min_budget:
         return error_response(code=400002, msg=f"预算过低，至少需要每人每天100元（最低{min_budget}元）")
-    
+
     # 执行任务分解
     subtasks = decompose_to_subtasks(requirement_id, structured_requirement)
-    
+
+    # 保存需求信息到requirements_store
+    requirements_store[requirement_id] = {
+        "user_id": int(structured_requirement.get("traveler_count", 1) or 1),
+        "city_name": structured_requirement.get("city_name", ""),
+        "travel_days": int(structured_requirement.get("travel_days", 1) or 1),
+        "total_budget": float(structured_requirement.get("total_budget", 0) or 0),
+        "travel_date": structured_requirement.get("travel_date", ""),
+        "traveler_count": int(structured_requirement.get("traveler_count", 1) or 1),
+        "preferences": structured_requirement.get("preferences", []),
+    }
+
     # 生成任务批次ID
     batch_id = str(uuid.uuid4())
-    
+
     # 批量创建子任务到数据库
     tasks = TaskService.create_batch_tasks(
         db=db,
@@ -199,15 +212,263 @@ async def decompose_task(request_data: Dict[str, Any], db: Session = Depends(get
         requirement_id=requirement_id,
         subtasks=subtasks
     )
-    
+
     # 构建响应数据
     tasks_info = [TaskInfo(
-        task_id=task.task_id,
-        agent=task.agent_type,
-        status=task.status,
+        task_id=str(task.task_id),
+        agent=str(task.agent_type),
+        status=str(task.status),
         result=None
     ) for task in tasks]
-    
+
+    # 异步执行子任务
+    import asyncio
+    from src.agents import AttractionsAgent, HotelAgent, FoodAgent, TransportAgent
+
+    async def execute_subtasks(db_session: Session):
+        """异步执行所有子任务"""
+        print(f"[任务执行] 开始执行批次任务 {batch_id}")
+        try:
+            # 初始化智能体
+            attractions_agent = AttractionsAgent()
+            hotel_agent = HotelAgent()
+            food_agent = FoodAgent()
+            transport_agent = TransportAgent()
+            print(f"[任务执行] 智能体初始化完成")
+
+            # 执行每个子任务
+            for i, subtask in enumerate(subtasks):
+                task_id_local = subtask["subtask_id"]
+                agent_type = subtask["agent_type"]
+                parameters = subtask["parameters"]
+
+                print(f"[任务执行] 开始执行子任务 {task_id_local} ({agent_type})")
+
+                try:
+                    # 根据智能体类型执行相应的任务
+                    if agent_type == "attraction":
+                        result = await attractions_agent.execute({
+                            "task_id": task_id_local,
+                            **parameters
+                        })
+                    elif agent_type == "accommodation":
+                        result = await hotel_agent.execute({
+                            "task_id": task_id_local,
+                            **parameters
+                        })
+                    elif agent_type == "food":
+                        result = await food_agent.execute({
+                            "task_id": task_id_local,
+                            **parameters
+                        })
+                    elif agent_type == "transport":
+                        result = await transport_agent.execute({
+                            "task_id": task_id_local,
+                            **parameters
+                        })
+                    else:
+                        result = {"status": "failed", "error_message": f"未知的智能体类型: {agent_type}"}
+
+                    print(f"[任务执行] 子任务 {task_id_local} 执行结果: {result['status']}")
+
+                    # 更新数据库中的任务状态
+                    if result["status"] == "success":
+                        data = result.get("data", {})
+                        items = data.get("items", []) if isinstance(data, dict) else []
+
+                        task_result = {}
+                        if agent_type == "attraction":
+                            task_result = {"attractions": items}
+                        elif agent_type == "food":
+                            task_result = {"restaurants": items}
+                        elif agent_type == "accommodation":
+                            task_result = {"hotels": items}
+                        else:
+                            # 确保task_result始终是字典类型
+                            task_result = data if isinstance(data, dict) else {"data": data}
+
+                        TaskService.update_task_result(
+                            db=db_session,
+                            task_id=task_id_local,
+                            status="success",
+                            result=task_result,
+                            error=""
+                        )
+                    else:
+                        error_msg = result.get("error_message", "执行失败")
+                        TaskService.update_task_result(
+                            db=db_session,
+                            task_id=task_id_local,
+                            status="failed",
+                            result={},
+                            error=error_msg
+                        )
+                        print(f"[任务执行] 子任务 {task_id_local} 错误信息: {error_msg}")
+
+                except Exception as e:
+                    print(f"[任务执行] 子任务 {task_id_local} 执行失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    TaskService.update_task_result(
+                        db=db_session,
+                        task_id=task_id_local,
+                        status="failed",
+                        result={},
+                        error=str(e)
+                    )
+
+            # 所有子任务完成，检查是否需要创建行程
+            # 从数据库重新查询任务状态
+            tasks = TaskService.get_batch_tasks(db_session, batch_id)
+            completed_count = sum(1 for task in tasks if str(task.status) == "success")
+            failed_count = sum(1 for task in tasks if str(task.status) == "failed")
+
+            print(f"[任务执行] 批次任务 {batch_id} 完成: 成功 {completed_count}, 失败 {failed_count}")
+
+            if failed_count == 0:
+                # 所有子任务成功，自动创建行程
+                try:
+                    from src.services.database_service import ItineraryService
+                    from src.services.weather_service import WeatherService
+
+                    # 收集所有子任务的结果
+                    attractions_result = None
+                    hotel_result = None
+                    food_result = None
+                    transport_result = None
+
+                    for task in tasks:
+                        if str(task.agent_type) == "attraction" and task.result is not None:
+                            attractions_result = task.result
+                        elif str(task.agent_type) == "accommodation" and task.result is not None:
+                            hotel_result = task.result
+                        elif str(task.agent_type) == "food" and task.result is not None:
+                            food_result = task.result
+                        elif str(task.agent_type) == "transport" and task.result is not None:
+                            transport_result = task.result
+
+                    # 获取需求信息
+                    requirement_data = requirements_store.get(requirement_id, {})
+                    city_name = str(requirement_data.get("city_name", ""))
+                    travel_days = int(requirement_data.get("travel_days", 1) or 1)
+                    total_budget = float(requirement_data.get("total_budget", 0) or 0)
+                    travel_date = str(requirement_data.get("travel_date", ""))
+
+                    # 获取天气信息
+                    weather_info = None
+                    if city_name:
+                        try:
+                            weather_service = WeatherService()
+                            weather_response = await weather_service.get_weather(city_name, extensions="all")
+                            if weather_response.get("status") == "success":
+                                forecasts = weather_response.get("data", [])
+                                if forecasts and len(forecasts) > 0:
+                                    weather_info = forecasts[0].get("casts", [])
+                        except Exception as e:
+                            print(f"获取天气信息失败: {str(e)}")
+
+                    # 构建每日行程计划
+                    day_plans = []
+                    for day in range(1, travel_days + 1):
+                        # 计算当天日期
+                        if travel_date:
+                            current_date = (datetime.strptime(travel_date, "%Y-%m-%d") + timedelta(days=day-1)).strftime("%Y-%m-%d")
+                        else:
+                            current_date = (datetime.now() + timedelta(days=day-1)).strftime("%Y-%m-%d")
+
+                        # 获取当天天气信息
+                        day_weather = None
+                        if weather_info and len(weather_info) >= day:
+                            day_weather = {
+                                "date": weather_info[day-1].get("date", ""),
+                                "dayweather": weather_info[day-1].get("dayweather", ""),
+                                "nightweather": weather_info[day-1].get("nightweather", ""),
+                                "daytemp": weather_info[day-1].get("daytemp", ""),
+                                "nighttemp": weather_info[day-1].get("nighttemp", ""),
+                                "daywind": weather_info[day-1].get("daywind", ""),
+                                "nightwind": weather_info[day-1].get("nightwind", "")
+                            }
+
+                        day_plan = {
+                            "day": day,
+                            "date": current_date,
+                            "attractions": [],
+                            "meals": [],
+                            "transport": None,
+                            "hotel": None,
+                            "notes": "",
+                            "weather": day_weather
+                        }
+
+                        # 添加景点(如果有)
+                        if attractions_result is not None and isinstance(attractions_result, dict) and "attractions" in attractions_result:
+                            attractions = attractions_result["attractions"]
+                            if isinstance(attractions, list) and len(attractions) > 0:
+                                attractions_per_day = max(1, len(attractions) // travel_days)
+                                start_idx = (day - 1) * attractions_per_day
+                                end_idx = min(start_idx + attractions_per_day, len(attractions))
+                                day_plan["attractions"] = attractions[start_idx:end_idx]
+
+                        # 添加餐饮(如果有)
+                        if food_result is not None and isinstance(food_result, dict) and "restaurants" in food_result:
+                            restaurants = food_result["restaurants"]
+                            if isinstance(restaurants, list) and len(restaurants) > 0:
+                                meals_per_day = min(3, len(restaurants))
+                                start_idx = (day - 1) * meals_per_day
+                                end_idx = min(start_idx + meals_per_day, len(restaurants))
+                                day_plan["meals"] = restaurants[start_idx:end_idx]
+
+                        # 第一天添加住宿信息
+                        if day == 1 and hotel_result is not None and isinstance(hotel_result, dict) and "hotels" in hotel_result:
+                            hotels = hotel_result["hotels"]
+                            if isinstance(hotels, list) and len(hotels) > 0:
+                                day_plan["hotel"] = hotels[0]
+
+                        # 添加交通信息
+                        if transport_result is not None:
+                            day_plan["transport"] = transport_result
+
+                        day_plans.append(day_plan)
+
+                    # 创建行程
+                    itinerary = ItineraryService.create_itinerary(
+                        db=db_session,
+                        user_id=str(requirement_data.get("user_id", "user_default")),
+                        day_plans=day_plans,
+                        title=f"{city_name} {travel_days}日游",
+                        total_budget=total_budget,
+                        requirement_id=requirement_id
+                    )
+
+                    print(f"[任务执行] 行程创建成功: {itinerary.itinerary_id}")
+
+                except Exception as e:
+                    print(f"[任务执行] 创建行程失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+        except Exception as e:
+            print(f"[任务执行] 执行子任务时出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # 启动异步任务执行
+    # 使用后台任务执行，确保数据库会话正确管理
+    from src.database import SessionLocal
+
+    def execute_subtasks_with_db():
+        """在独立的数据库会话中执行子任务"""
+        async_db = SessionLocal()
+        try:
+            # 使用asyncio.run来运行异步函数，并传递数据库会话
+            import asyncio
+            asyncio.run(execute_subtasks(async_db))
+        finally:
+            async_db.close()
+
+    # 添加到后台任务队列
+    background_tasks.add_task(execute_subtasks_with_db)
+
     return success_response(
         data={
             "task_id": batch_id,
@@ -226,32 +487,32 @@ async def dispatch_tasks(request: TaskDispatchRequest, db: Session = Depends(get
     """
     batch_id = str(uuid.uuid4())
     subtasks = []
-    
+
     for agent in request.agents:
         subtasks.append({
             "agent_type": agent,
             "parameters": {}
         })
-    
+
     tasks = TaskService.create_batch_tasks(
         db=db,
         batch_id=batch_id,
         requirement_id=request.requirement_id,
         subtasks=subtasks
     )
-    
+
     tasks_info = [TaskInfo(
-        task_id=task.task_id,
-        agent=task.agent_type,
-        status=task.status,
+        task_id=str(task.task_id),
+        agent=str(task.agent_type),
+        status=str(task.status),
         result=None
     ) for task in tasks]
-    
+
     return success_response(
         data=TaskDispatchResponse(
-            batch_id=batch_id, 
-            tasks=[t.model_dump() for t in tasks_info]
-        ).model_dump(), 
+            batch_id=batch_id,
+            tasks=tasks_info
+        ).model_dump(),
         msg="任务分发成功"
     )
 
@@ -263,9 +524,18 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
     """
     # 先尝试作为批次ID查询
     progress_info = TaskService.calculate_batch_progress(db, task_id)
-    
+
     if progress_info["total"] > 0:
         # 是批次ID，返回总体进度
+        # 查询是否有关联的行程
+        from src.models.db_models import Itinerary
+        itinerary = None
+        # 尝试通过requirement_id查找行程
+        batch_tasks = TaskService.get_batch_tasks(db, task_id)
+        if batch_tasks:
+            requirement_id = batch_tasks[0].requirement_id
+            itinerary = db.query(Itinerary).filter(Itinerary.requirement_id == requirement_id).first()
+
         return success_response(data={
             "task_id": task_id,
             "status": progress_info["status"],
@@ -273,29 +543,40 @@ async def get_task_status(task_id: str, db: Session = Depends(get_db)):
             "completed": progress_info["completed"],
             "failed": progress_info["failed"],
             "total": progress_info["total"],
-            "message": f"已完成 {progress_info['completed']}/{progress_info['total']} 个子任务"
+            "message": f"已完成 {progress_info['completed']}/{progress_info['total']} 个子任务",
+            "itinerary_id": itinerary.itinerary_id if itinerary else None
         }, msg="获取成功")
-    
+
     # 尝试作为单个任务ID查询
     task = TaskService.get_task(db, task_id)
-    
+
     if not task:
         return error_response(code=404, msg="任务不存在")
-    
-    return success_response(data=TaskStatusResponse(
-        task_id=task.task_id,
-        agent=task.agent_type,
-        status=task.status,
-        result=task.result,
-        error=task.error
-    ).model_dump(), msg="获取成功")
+
+    # 查找关联的行程
+    from src.models.db_models import Itinerary
+    itinerary = db.query(Itinerary).filter(Itinerary.requirement_id == task.requirement_id).first()
+
+    response_data = TaskStatusResponse(
+        task_id=str(task.task_id),
+        agent=str(task.agent_type),
+        status=str(task.status),
+        result=task.result if isinstance(task.result, dict) else None,
+        error=str(task.error) if task.error is not None else None
+    ).model_dump()
+
+    # 添加行程ID
+    if itinerary:
+        response_data["itinerary_id"] = itinerary.itinerary_id
+
+    return success_response(data=response_data, msg="获取成功")
 
 
 @router.post("/update/{task_id}")
 async def update_task_result(task_id: str, result_data: Dict[str, Any], db: Session = Depends(get_db)):
     """
     更新任务结果（供智能体调用）- 保存到数据库
-    
+
     请求参数:
     {
         "status": "success" | "failed",
@@ -303,18 +584,30 @@ async def update_task_result(task_id: str, result_data: Dict[str, Any], db: Sess
         "error": null | "错误信息"
     }
     """
+    # 获取result参数，确保是字典类型
+    result_value = result_data.get("result")
+    if not isinstance(result_value, dict):
+        result_value = {}
+
+    # 获取error参数，确保是字符串类型
+    error_value = result_data.get("error")
+    if error_value is None:
+        error_value = ""
+    else:
+        error_value = str(error_value)
+
     task = TaskService.update_task_result(
         db=db,
         task_id=task_id,
         status=result_data.get("status", "success"),
-        result=result_data.get("result"),
-        error=result_data.get("error")
+        result=result_value,
+        error=error_value
     )
-    
+
     if not task:
         return error_response(code=404, msg="任务不存在")
-    
+
     return success_response(
-        data={"task_id": task_id, "status": task.status}, 
+        data={"task_id": task_id, "status": task.status},
         msg="任务结果更新成功"
     )

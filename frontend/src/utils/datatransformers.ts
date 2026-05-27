@@ -60,7 +60,12 @@ export const transformTransport = (transport: any) => ({
   departure_time: transport.departure_time || '',
   arrival_time: transport.arrival_time || '',
   duration: transport.duration || '',
+  duration_text: transport.duration_text || '',
+  distance: transport.distance || 0,
+  distance_text: transport.distance_text || '',
   price: transport.price || transport.cost || 0,
+  polyline: transport.polyline || '',
+  steps: transport.steps || [],
 });
 
 // 批量转换景点数据

@@ -184,6 +184,8 @@ class ItineraryUpdateRequest(BaseModel):
     """更新行程请求"""
     title: Optional[str] = None
     day_plans: Optional[List[Dict[str, Any]]] = None  # 改为支持字典数组
+    status: Optional[str] = None
+    total_budget: Optional[float] = None
 
 
 class ItineraryResponse(BaseModel):
