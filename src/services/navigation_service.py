@@ -175,120 +175,137 @@ class NavigationService:
     def _parse_route_data(self, data: Dict[str, Any], mode: str) -> Dict[str, Any]:
         """
         解析路线数据
-
-        Args:
-            data: API返回的原始数据
-            mode: 导航模式
-
-        Returns:
-            解析后的路线数据
         """
         route_info = {
             'mode': mode,
             'distance': 0,
             'duration': 0,
             'steps': [],
-            'polyline': ''
+            'polyline': '',
+            'transits': []
         }
+
+        def _safe_int(value, default=0):
+            if value is None:
+                return default
+            try:
+                return int(float(str(value)))
+            except (ValueError, TypeError):
+                return default
+
+        def _safe_float_str(value, default=''):
+            if value is None:
+                return default
+            try:
+                return float(str(value))
+            except (ValueError, TypeError):
+                return default
 
         if mode in ['walking', 'driving', 'bicycling']:
             route = data.get('route', {})
             paths = route.get('paths', [])
             if paths:
                 path = paths[0]
-                # 确保distance和duration是数值类型
-                distance = path.get('distance', 0)
-                duration = path.get('duration', 0)
-                try:
-                    route_info['distance'] = int(float(str(distance))) if distance else 0
-                except (ValueError, TypeError):
-                    route_info['distance'] = 0
-                try:
-                    route_info['duration'] = int(float(str(duration))) if duration else 0
-                except (ValueError, TypeError):
-                    route_info['duration'] = 0
+                route_info['distance'] = _safe_int(path.get('distance', 0))
+                route_info['duration'] = _safe_int(path.get('duration', 0))
                 route_info['polyline'] = path.get('polyline', '')
-
-                # 解析步骤
                 steps = path.get('steps', [])
                 for step in steps:
-                    step_distance = step.get('distance', 0)
-                    step_duration = step.get('duration', 0)
-                    try:
-                        step_distance = int(float(str(step_distance))) if step_distance else 0
-                    except (ValueError, TypeError):
-                        step_distance = 0
-                    try:
-                        step_duration = int(float(str(step_duration))) if step_duration else 0
-                    except (ValueError, TypeError):
-                        step_duration = 0
-
                     route_info['steps'].append({
                         'instruction': step.get('instruction', ''),
-                        'distance': step_distance,
-                        'duration': step_duration,
-                        'polyline': step.get('polyline', '')
+                        'distance': _safe_int(step.get('distance', 0)),
+                        'duration': _safe_int(step.get('duration', 0)),
+                        'polyline': step.get('polyline', ''),
+                        'road': step.get('road', ''),
+                        'action': step.get('action', ''),
+                        'assistant_action': step.get('assistant_action', '')
                     })
-
         elif mode == 'transit':
             route = data.get('route', {})
             transits = route.get('transits', [])
             if transits:
                 transit = transits[0]
-                # 确保distance和duration是数值类型
-                distance = transit.get('distance', 0)
-                duration = transit.get('duration', 0)
-                try:
-                    route_info['distance'] = int(float(str(distance))) if distance else 0
-                except (ValueError, TypeError):
-                    route_info['distance'] = 0
-                try:
-                    route_info['duration'] = int(float(str(duration))) if duration else 0
-                except (ValueError, TypeError):
-                    route_info['duration'] = 0
-
-                # 提取公交路线的polyline
-                if 'polyline' in transit:
-                    route_info['polyline'] = transit['polyline']
-
-                # 解析公交路线
+                route_info['distance'] = _safe_int(transit.get('distance', 0))
+                route_info['duration'] = _safe_int(transit.get('duration', 0))
+                all_transits = []
+                for t in transits:
+                    all_transits.append({
+                        'cost': _safe_float_str(t.get('cost', 0)),
+                        'duration': _safe_int(t.get('duration', 0)),
+                        'walking_distance': _safe_int(t.get('walking_distance', 0)),
+                        'distance': _safe_int(t.get('distance', 0)),
+                    })
                 segments = transit.get('segments', [])
-                for segment in segments:
-                    # 处理步行段
+                for seg_idx, segment in enumerate(segments):
                     walking = segment.get('walking', {})
-                    walking_distance = walking.get('distance', 0)
-                    # 确保distance是数值类型
-                    if walking_distance:
-                        try:
-                            walking_distance = int(float(str(walking_distance)))
-                        except (ValueError, TypeError):
-                            walking_distance = 0
-
+                    walking_steps = walking.get('steps', [])
+                    walking_distance = _safe_int(walking.get('distance', 0))
                     if walking and walking_distance > 0:
+                        walking_polylines = []
+                        for ws in walking_steps:
+                            wp = ws.get('polyline', '')
+                            if wp:
+                                walking_polylines.append(wp)
                         route_info['steps'].append({
                             'type': 'walking',
-                            'instruction': walking.get('instruction', '步行'),
+                            'instruction': f"步行{walking_distance}米",
                             'distance': walking_distance,
-                            'duration': int(float(str(walking.get('duration', 0)))) if walking.get('duration') else 0,
-                            'polyline': walking.get('polyline', '')
+                            'duration': _safe_int(walking.get('duration', 0)),
+                            'polyline': ';'.join(walking_polylines) if walking_polylines else '',
+                            'seg_steps': [
+                                {
+                                    'instruction': ws.get('instruction', ''),
+                                    'distance': _safe_int(ws.get('distance', 0)),
+                                    'polyline': ws.get('polyline', ''),
+                                    'road': ws.get('road', ''),
+                                    'action': ws.get('action', ''),
+                                    'assistant_action': ws.get('assistant_action', '')
+                                }
+                                for ws in walking_steps
+                            ]
                         })
-
-                    # 处理公交/地铁段
                     bus = segment.get('bus', {})
                     buslines = bus.get('buslines', [])
-                    if bus and buslines:
+                    if buslines:
                         for busline in buslines:
                             route_info['steps'].append({
                                 'type': busline.get('type', 'bus'),
                                 'instruction': f"乘坐{busline.get('name', '')}",
-                                'distance': int(float(str(bus.get('distance', 0)))) if bus.get('distance') else 0,
-                                'duration': int(float(str(bus.get('duration', 0)))) if bus.get('duration') else 0,
-                                'departure': bus.get('departure', {}).get('name', ''),
-                                'arrival': bus.get('arrival', {}).get('name', ''),
-                                'via_num': int(float(str(busline.get('via_num', 0)))) if busline.get('via_num') else 0,
-                                'polyline': bus.get('polyline', '')
+                                'name': busline.get('name', ''),
+                                'distance': _safe_int(busline.get('distance', 0)),
+                                'duration': _safe_int(busline.get('duration', 0)),
+                                'departure_stop': busline.get('departure_stop', {}).get('name', ''),
+                                'arrival_stop': busline.get('arrival_stop', {}).get('name', ''),
+                                'departure_location': busline.get('departure_stop', {}).get('location', ''),
+                                'arrival_location': busline.get('arrival_stop', {}).get('location', ''),
+                                'via_num': _safe_int(busline.get('via_num', 0)),
+                                'via_stops': [
+                                    {'name': vs.get('name', ''), 'location': vs.get('location', '')}
+                                    for vs in busline.get('via_stops', [])
+                                ],
+                                'start_time': busline.get('start_time', ''),
+                                'end_time': busline.get('end_time', ''),
+                                'polyline': busline.get('polyline', '')
                             })
-
+                    entrance = segment.get('entrance', {})
+                    if entrance and entrance.get('name'):
+                        route_info['steps'].append({
+                            'type': 'entrance',
+                            'instruction': f"从{entrance.get('name', '')}进站",
+                            'name': entrance.get('name', ''),
+                            'location': entrance.get('location', ''),
+                            'polyline': ''
+                        })
+                    exit_info = segment.get('exit', {})
+                    if exit_info and exit_info.get('name'):
+                        route_info['steps'].append({
+                            'type': 'exit',
+                            'instruction': f"从{exit_info.get('name', '')}出站",
+                            'name': exit_info.get('name', ''),
+                            'location': exit_info.get('location', ''),
+                            'polyline': ''
+                        })
+                route_info['transits'] = all_transits
         return route_info
 
     def format_distance(self, distance: int) -> str:

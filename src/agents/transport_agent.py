@@ -109,7 +109,9 @@ class TransportAgent(BaseAgent):
                     "task_id": task_id,
                     "status": "success",
                     "data": {
-                        "items": [transport_option]
+                        "items": [transport_option],
+                        # 同时保留完整的导航数据
+                        "route_data": route_data
                     },
                     "metadata": {
                         "processing_time_ms": processing_time,
