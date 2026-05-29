@@ -306,6 +306,13 @@ class NavigationService:
                             'polyline': ''
                         })
                 route_info['transits'] = all_transits
+                # 拼接公交模式的完整 polyline（从各 busline 的 polyline 拼接）
+                all_transit_polylines = []
+                for step in route_info['steps']:
+                    if step.get('polyline'):
+                        all_transit_polylines.append(step['polyline'])
+                if all_transit_polylines:
+                    route_info['polyline'] = ';'.join(all_transit_polylines)
         return route_info
 
     def format_distance(self, distance: int) -> str:

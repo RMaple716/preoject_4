@@ -30,6 +30,8 @@ interface NavigationData {
   duration_text: string;
   steps: NavigationStep[];
   polyline?: string;
+  fromLocation?: { lat: number; lng: number } | null;
+  toLocation?: { lat: number; lng: number } | null;
 }
 
 interface LocationPoint {
@@ -310,10 +312,23 @@ const NavigationMapModal: React.FC<{
           });
         }
 
+                // 处理 polyline（高德 v2.0 使用自定义解码，不用 AMap.GeometryUtil.decodePath）
         if (navigationData.polyline) {
           try {
-            const path = (window as any).AMap.GeometryUtil.decodePath(navigationData.polyline);
-            if (path && path.length > 0) {
+            // 高德格式 polyline: "lng1,lat1;lng2,lat2;..."
+            const pointStrings = navigationData.polyline.split(';');
+            const path: [number, number][] = [];
+            for (const ps of pointStrings) {
+              const parts = ps.split(',');
+              if (parts.length === 2) {
+                const lng = parseFloat(parts[0]);
+                const lat = parseFloat(parts[1]);
+                if (!isNaN(lat) && !isNaN(lng)) {
+                  path.push([lng, lat]);
+                }
+              }
+            }
+            if (path.length >= 2) {
               const polylineObj = new (window as any).AMap.Polyline({
                 path: path,
                 borderWeight: 2,
@@ -342,14 +357,15 @@ const NavigationMapModal: React.FC<{
                 map.setFitView();
               }
               if (!cancelled) setLoading(false);
-              return;
+              return;  // polyline 成功，不再执行 search
             }
           } catch (e) {
-            console.warn('polyline解码失败，尝试使用API搜索路线', e);
+            console.warn('polyline解析失败，尝试使用API搜索路线', e);
           }
         }
 
-                const navigatorMap: Record<string, any> = {
+        // polyline 没有或解析失败，使用高德 API 搜索路线
+        const navigatorMap: Record<string, any> = {
           'walking': (window as any).AMap.Walking,
           'driving': (window as any).AMap.Driving,
           'transit': (window as any).AMap.Transit,
@@ -359,7 +375,15 @@ const NavigationMapModal: React.FC<{
         const NavigatorClass = navigatorMap[navigationData.type] || (window as any).AMap.Driving;
         const navigator = new NavigatorClass({ map, panel: null, hideMarkers: false });
 
-        navigator.search(navigationData.from, navigationData.to, (status: string, result: any) => {
+        // 优先使用坐标搜索路线，次选景点名称
+        const searchOrigin = navigationData.fromLocation
+          ? [navigationData.fromLocation.lng, navigationData.fromLocation.lat]
+          : navigationData.from;
+        const searchDest = navigationData.toLocation
+          ? [navigationData.toLocation.lng, navigationData.toLocation.lat]
+          : navigationData.to;
+
+        navigator.search(searchOrigin, searchDest, (status: string, result: any) => {
           if (!cancelled) setLoading(false);
           if (status === 'complete') {
             console.log('路线规划成功');
@@ -368,7 +392,13 @@ const NavigationMapModal: React.FC<{
             }
           } else {
             console.error('路线规划失败:', result);
-            if (!cancelled) setLoadError(result?.info || '路线规划失败');
+            // 即使路线规划失败，如果有景点标记也尝试缩放到合适范围
+            if (allMarkers.length > 0) {
+              map.setFitView(allMarkers, false, [50, 50, 50, 50]);
+              if (!cancelled) setLoadError('路线规划失败，但已显示景点位置');
+            } else {
+              if (!cancelled) setLoadError(result?.info || '路线规划失败');
+            }
           }
         });
 
@@ -435,7 +465,7 @@ const NavigationMapModal: React.FC<{
 // ==================== 主组件 ====================
 const NavigationMapView: React.FC<NavigationMapViewProps> = ({
   navigationData,
-  allLocations  // ⬅️【修复】补上这个参数，之前被忽略了
+  allLocations  
 }) => {
   const [showMap, setShowMap] = useState(false);
 

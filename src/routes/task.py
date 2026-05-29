@@ -129,8 +129,8 @@ def decompose_to_subtasks(requirement_id: str, structured_requirement: Dict[str,
         "travel_days": travel_days,
         "budget": transport_budget,
         "mode_preference": "transit",
-        "from_location": {"name": f"{city_name}市中心"},
-        "to_location": {"name": f"{city_name}机场"}
+        "from_location": {"name": f""},
+        "to_location": {"name": f""}
     }
     subtasks.append({
         "subtask_id": transport_subtask_id,
@@ -394,8 +394,6 @@ async def decompose_task(request_data: Dict[str, Any], background_tasks: Backgro
                     hotels_data = safe_get(hotel_result, "hotels", [])
                     restaurants_data = safe_get(food_result, "restaurants", [])
                     transport_options = safe_get(transport_result, "transport_options", [])
-                    route_data = safe_get(transport_result, "route_data", {})
-
                     # 确保列表中的每个元素都是字典
                     attractions_data = [a for a in attractions_data if isinstance(a, dict)]
                     hotels_data = [h for h in hotels_data if isinstance(h, dict)]
@@ -414,7 +412,6 @@ async def decompose_task(request_data: Dict[str, Any], background_tasks: Backgro
                         },
                         "transport": {
                             "transport_options": transport_options,
-                            "route_data": route_data
                         }
                     }
 

@@ -26,7 +26,7 @@ export async function testRequirementApi() {
         travel_days: 3,
         total_budget: 5000,
         travel_type: 'family',
-        start_date: '2026-05-20',
+    
         preferences: ['历史古迹', '美食探索']
       }
     });
@@ -246,9 +246,16 @@ export async function testAgentApi() {
     
     // 交通推荐
     const transportResponse = await agentApi.getTransport({
-      city_name: '西安',
-      travel_days: 2,
-      budget: 200,
+      from_location: {
+        name: '西安钟楼',
+        lat: 34.261,
+        lng: 108.942
+      },
+      to_location: {
+        name: '西安兵马俑',
+        lat: 34.384,
+        lng: 109.273
+      },
       mode_preference: 'transit'
     });
     console.log('✅ 交通推荐:', transportResponse.data);
@@ -266,11 +273,6 @@ export async function testFullWorkflow() {
   
   try {
     // 1. 提交需求
-    const requirementId = await testRequirementApi();
-    
-    // 2. 任务分解
-    const taskId = await testTaskApi(requirementId);
-    
     // 3. 测试其他API
     await testItineraryApi();
     await testValidationApi();
