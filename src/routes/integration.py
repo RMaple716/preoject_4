@@ -23,10 +23,13 @@ def calculate_route_optimization(attractions: List[Dict[str, Any]]) -> List[Dict
     if not attractions or len(attractions) <= 1:
         return attractions
     
+    # 过滤掉非字典类型的元素
+    valid_attractions = [a for a in attractions if isinstance(a, dict)]
+    
     # 简化版：按纬度排序（实际应使用更复杂的路径规划算法）
     sorted_attractions = sorted(
-        attractions, 
-        key=lambda x: x.get("location", {}).get("lat", 0)
+        valid_attractions, 
+        key=lambda x: x.get("location", {}).get("lat", 0) if isinstance(x.get("location"), dict) else 0
     )
     
     return sorted_attractions
@@ -47,8 +50,16 @@ def estimate_transport_time(from_loc: Dict, to_loc: Dict) -> int:
         return 30  # 默认30分钟
     
     # 简化判断：如果地点相同或很近，认为距离较近
-    from_name = from_loc.get("name", "")
-    to_name = to_loc.get("name", "")
+    # 处理字符串输入的情况
+    if isinstance(from_loc, str):
+        from_name = from_loc
+    else:
+        from_name = from_loc.get("name", "") if from_loc else ""
+
+    if isinstance(to_loc, str):
+        to_name = to_loc
+    else:
+        to_name = to_loc.get("name", "") if to_loc else ""
     
     if from_name == to_name or from_name in to_name or to_name in from_name:
         return 15
@@ -83,10 +94,11 @@ def integrate_agent_results_to_daily_plans(
         - hotel: 住宿信息（仅第一天或换酒店时）
         - daily_cost: 当日总花费
     """
-    # 提取基本信息
+        # 提取基本信息
     travel_days = structured_requirement.get("travel_days", 1)
     travel_date_str = structured_requirement.get("travel_date", datetime.now().strftime("%Y-%m-%d"))
     traveler_count = structured_requirement.get("traveler_count", 1)
+    city_name = structured_requirement.get("city_name", "")
     
     # 解析起始日期
     try:
@@ -99,6 +111,61 @@ def integrate_agent_results_to_daily_plans(
     hotels_data = agent_results.get("accommodation", {}).get("hotels", [])
     restaurants_data = agent_results.get("food", {}).get("restaurants", [])
     transport_data = agent_results.get("transport", {}).get("transport_options", [])
+    # 也支持直接从 items 中读取（兼容transport_agent原始返回格式）
+    if not transport_data:
+        transport_data = agent_results.get("transport", {}).get("items", [])
+
+    # ========== 统一标准化所有 location 字段为 {lat, lng} 对象格式 ==========
+    def _normalize_location(item: dict) -> None:
+        """将 item 中的 location 统一转为 {lat, lng} 对象格式"""
+        if not isinstance(item, dict):
+            return
+        loc = item.get("location")
+        if loc is None:
+            # 尝试从 address 猜坐标（无法猜，留空）
+            return
+        if isinstance(loc, str):
+            # 字符串格式 "lat,lng" 或纯地址
+            if "," in loc and len(loc.split(",")) == 2:
+                try:
+                    parts = loc.split(",")
+                    lat, lng = float(parts[0].strip()), float(parts[1].strip())
+                    item["location"] = {"lat": lat, "lng": lng}
+                except (ValueError, TypeError):
+                    # 无法解析为数字，把字符串当地址处理
+                    if not item.get("address"):
+                        item["address"] = loc
+                    item["location"] = None
+            else:
+                # 纯地址字符串，挪到 address 字段
+                if not item.get("address"):
+                    item["address"] = loc
+                item["location"] = None
+        elif isinstance(loc, dict):
+            # 已经是 dict，确保有 lat/lng 键
+            if "lat" not in loc and "latitude" in loc:
+                loc["lat"] = loc.pop("latitude")
+            if "lng" not in loc and "longitude" in loc:
+                loc["lng"] = loc.pop("longitude")
+            if "lon" in loc and "lng" not in loc:
+                loc["lng"] = loc.pop("lon")
+            # 确保 lat/lng 是数字
+            for key in ("lat", "lng"):
+                if key in loc and not isinstance(loc[key], (int, float)):
+                    try:
+                        loc[key] = float(loc[key])
+                    except (ValueError, TypeError):
+                        loc[key] = 0
+
+    for attraction in attractions_data:
+        _normalize_location(attraction)
+    for hotel in hotels_data:
+        _normalize_location(hotel)
+    for restaurant in restaurants_data:
+        _normalize_location(restaurant)
+    for transport in transport_data:
+        _normalize_location(transport)
+
 
     # 为景点数据添加city_name字段
     for attraction in attractions_data:
@@ -118,10 +185,10 @@ def integrate_agent_results_to_daily_plans(
     # 对景点进行路线优化
     optimized_attractions = calculate_route_optimization(attractions_data)
     
-    # 按时间段分组景点（morning/afternoon/evening）
-    morning_attractions = [a for a in optimized_attractions if a.get("visit_time_slot") == "morning"]
-    afternoon_attractions = [a for a in optimized_attractions if a.get("visit_time_slot") == "afternoon"]
-    evening_attractions = [a for a in optimized_attractions if a.get("visit_time_slot") == "evening"]
+        # 按时间段分组景点（morning/afternoon/evening）
+    morning_attractions = [a for a in optimized_attractions if isinstance(a, dict) and a.get("visit_time_slot") == "morning"]
+    afternoon_attractions = [a for a in optimized_attractions if isinstance(a, dict) and a.get("visit_time_slot") == "afternoon"]
+    evening_attractions = [a for a in optimized_attractions if isinstance(a, dict) and a.get("visit_time_slot") == "evening"]
     
     # 按天数均匀分配各时间段的景点
     attractions_per_day = {
@@ -209,7 +276,7 @@ def integrate_agent_results_to_daily_plans(
                 
                 day_meals.append(restaurant)
         
-        # 添加交通信息（景点之间）
+                # 添加交通信息（景点之间）
         day_transport = None
         if len(day_attractions) >= 2:
             # 计算第一个景点到第二个景点的交通
@@ -221,10 +288,13 @@ def integrate_agent_results_to_daily_plans(
                 to_attr.get("location", {})
             )
             
+            # 尝试获取route_data中已有的路线数据（从TransportAgent返回）
+            route_data = agent_results.get("transport", {}).get("route_data", {})
+            
             # 尝试使用智能体返回的交通数据
+            matched_transport = None
             if transport_data and len(transport_data) > 0:
                 # 查找匹配的交通选项
-                matched_transport = None
                 for transport in transport_data:
                     transport_from = transport.get("from", "")
                     transport_to = transport.get("to", "")
@@ -236,17 +306,39 @@ def integrate_agent_results_to_daily_plans(
                         matched_transport = transport
                         break
 
-                if matched_transport:
-                    day_transport = matched_transport.copy()
-                    # 确保有必要的字段
-                    if "transport_id" not in day_transport:
-                        day_transport["transport_id"] = f"trans_{uuid.uuid4().hex[:8]}"
-                    if "price" not in day_transport:
-                        day_transport["price"] = 5.0
-                    if "departure_time" not in day_transport:
-                        day_transport["departure_time"] = "11:30"
+            if matched_transport:
+                day_transport = matched_transport.copy()
+                # 确保有必要的字段
+                if "transport_id" not in day_transport:
+                    day_transport["transport_id"] = f"trans_{uuid.uuid4().hex[:8]}"
+                if "price" not in day_transport:
+                    day_transport["price"] = 5.0
+                if "departure_time" not in day_transport:
+                    day_transport["departure_time"] = "11:30"
+                # 如果transport_item没有polyline但route_data有，则使用route_data的polyline
+                if not day_transport.get("polyline") and route_data.get("polyline"):
+                    day_transport["polyline"] = route_data["polyline"]
+                if not day_transport.get("steps") and route_data.get("steps"):
+                    day_transport["steps"] = route_data["steps"]
+            else:
+                # 没有匹配的交通数据，尝试从route_data提取
+                if route_data.get("polyline"):
+                    day_transport = {
+                        "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
+                        "from": from_attr.get("name", ""),
+                        "to": to_attr.get("name", ""),
+                        "type": route_data.get("mode", "transit"),
+                        "duration": f"{transport_time}分钟",
+                        "duration_text": f"{transport_time}分钟",
+                        "distance": route_data.get("distance", 5000),
+                        "distance_text": f"{max(route_data.get('distance', 5000) / 1000, 0.1):.1f}公里" if route_data.get("distance") else "5.0公里",
+                        "price": 5.0,
+                        "departure_time": "11:30",
+                        "steps": route_data.get("steps", []),
+                        "polyline": route_data.get("polyline", "")
+                    }
                 else:
-                    # 没有匹配的交通数据，创建默认的交通信息
+                    # 创建默认的交通信息
                     day_transport = {
                         "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
                         "from": from_attr.get("name", ""),
@@ -261,22 +353,6 @@ def integrate_agent_results_to_daily_plans(
                         "steps": [],
                         "polyline": ""
                     }
-            else:
-                # 没有交通数据，创建默认的交通信息
-                day_transport = {
-                    "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
-                    "from": from_attr.get("name", ""),
-                    "to": to_attr.get("name", ""),
-                    "type": "transit",
-                    "duration": f"{transport_time}分钟",
-                    "duration_text": f"{transport_time}分钟",
-                    "distance": 5000,
-                    "distance_text": "5.0公里",
-                    "price": 5.0,
-                    "departure_time": "11:30",
-                    "steps": [],
-                    "polyline": ""
-                }
         
         # 添加住宿信息（仅第一天或需要换酒店时）
         day_hotel = None

@@ -66,3 +66,13 @@ export type { NLPRequest, NLPResponse } from './nlp';
 // 新增：天气API
 export { weatherApi } from './weather';
 export type { CurrentWeather, ForecastDay, WeatherForecast } from './weather';
+
+// 新增：导航路线API
+export { navigationApi } from './navigationApi';
+export type {
+  DirectionRequest,
+  DirectionResponse,
+  DirectionStep,
+  GeocodeRequest,
+  GeocodeResponse
+} from './navigationApi';

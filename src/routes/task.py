@@ -262,19 +262,42 @@ async def decompose_task(request_data: Dict[str, Any], background_tasks: Backgro
                             **parameters
                         })
                     elif agent_type == "transport":
+                        # 确保from_location和to_location有name字段
+                        from_name = parameters.get("from_location", {}).get("name", f"{parameters.get('city_name', '')}市中心")
+                        to_name = parameters.get("to_location", {}).get("name", f"{parameters.get('city_name', '')}机场")
+                        
+                        transport_params = parameters.copy()
+                        transport_params["from_location"] = parameters.get("from_location", {"name": from_name})
+                        transport_params["to_location"] = parameters.get("to_location", {"name": to_name})
+                        
                         result = await transport_agent.execute({
                             "task_id": task_id_local,
-                            **parameters
+                            **transport_params
                         })
                     else:
                         result = {"status": "failed", "error_message": f"未知的智能体类型: {agent_type}"}
 
-                    print(f"[任务执行] 子任务 {task_id_local} 执行结果: {result['status']}")
+                    # 检查result是否为字典类型
+                    if not isinstance(result, dict):
+                        print(f"[任务执行] 子任务 {task_id_local} 返回结果类型异常: {type(result)}")
+                        TaskService.update_task_result(
+                            db=db_session,
+                            task_id=task_id_local,
+                            status="failed",
+                            result={},
+                            error=f"智能体返回结果类型错误: 期望dict, 实际为{type(result).__name__}"
+                        )
+                        continue
+
+                    status = result.get("status", "failed")
+                    print(f"[任务执行] 子任务 {task_id_local} 执行结果: {status}")
 
                     # 更新数据库中的任务状态
-                    if result["status"] == "success":
+                    if status == "success":
                         data = result.get("data", {})
-                        items = data.get("items", []) if isinstance(data, dict) else []
+                        if not isinstance(data, dict):
+                            data = {}
+                        items = data.get("items", [])
 
                         task_result = {}
                         if agent_type == "attraction":
@@ -283,6 +306,9 @@ async def decompose_task(request_data: Dict[str, Any], background_tasks: Backgro
                             task_result = {"restaurants": items}
                         elif agent_type == "accommodation":
                             task_result = {"hotels": items}
+                        elif agent_type == "transport":
+                            items = data.get("items", [])
+                            task_result = {"transport_options": items, "route_data": data.get("route_data", {})}
                         else:
                             # 确保task_result始终是字典类型
                             task_result = data if isinstance(data, dict) else {"data": data}
@@ -329,9 +355,9 @@ async def decompose_task(request_data: Dict[str, Any], background_tasks: Backgro
                 # 所有子任务成功，自动创建行程
                 try:
                     from src.services.database_service import ItineraryService
-                    from src.services.weather_service import WeatherService
+                    from src.routes.integration import integrate_agent_results_to_daily_plans
 
-                    # 收集所有子任务的结果
+                    # 收集所有子任务的结果为agent_results格式
                     attractions_result = None
                     hotel_result = None
                     food_result = None
@@ -353,82 +379,56 @@ async def decompose_task(request_data: Dict[str, Any], background_tasks: Backgro
                     travel_days = int(requirement_data.get("travel_days", 1) or 1)
                     total_budget = float(requirement_data.get("total_budget", 0) or 0)
                     travel_date = str(requirement_data.get("travel_date", ""))
+                    traveler_count = int(requirement_data.get("traveler_count", 1) or 1)
+                    preferences = requirement_data.get("preferences", [])
 
-                    # 获取天气信息
-                    weather_info = None
-                    if city_name:
-                        try:
-                            weather_service = WeatherService()
-                            weather_response = await weather_service.get_weather(city_name, extensions="all")
-                            if weather_response.get("status") == "success":
-                                forecasts = weather_response.get("data", [])
-                                if forecasts and len(forecasts) > 0:
-                                    weather_info = forecasts[0].get("casts", [])
-                        except Exception as e:
-                            print(f"获取天气信息失败: {str(e)}")
+                                        # 构建agent_results数据
+                    # 确保从数据库读取的结果是字典类型
+                    def safe_get(data, key, default=None):
+                        """安全地从可能的数据结构中获取值"""
+                        if isinstance(data, dict):
+                            return data.get(key, default or ([] if isinstance(default, list) else {}))
+                        return default or ([] if isinstance(default, list) else {})
 
-                    # 构建每日行程计划
-                    day_plans = []
-                    for day in range(1, travel_days + 1):
-                        # 计算当天日期
-                        if travel_date:
-                            current_date = (datetime.strptime(travel_date, "%Y-%m-%d") + timedelta(days=day-1)).strftime("%Y-%m-%d")
-                        else:
-                            current_date = (datetime.now() + timedelta(days=day-1)).strftime("%Y-%m-%d")
+                    attractions_data = safe_get(attractions_result, "attractions", [])
+                    hotels_data = safe_get(hotel_result, "hotels", [])
+                    restaurants_data = safe_get(food_result, "restaurants", [])
+                    transport_options = safe_get(transport_result, "transport_options", [])
+                    route_data = safe_get(transport_result, "route_data", {})
 
-                        # 获取当天天气信息
-                        day_weather = None
-                        if weather_info and len(weather_info) >= day:
-                            day_weather = {
-                                "date": weather_info[day-1].get("date", ""),
-                                "dayweather": weather_info[day-1].get("dayweather", ""),
-                                "nightweather": weather_info[day-1].get("nightweather", ""),
-                                "daytemp": weather_info[day-1].get("daytemp", ""),
-                                "nighttemp": weather_info[day-1].get("nighttemp", ""),
-                                "daywind": weather_info[day-1].get("daywind", ""),
-                                "nightwind": weather_info[day-1].get("nightwind", "")
-                            }
+                    # 确保列表中的每个元素都是字典
+                    attractions_data = [a for a in attractions_data if isinstance(a, dict)]
+                    hotels_data = [h for h in hotels_data if isinstance(h, dict)]
+                    restaurants_data = [r for r in restaurants_data if isinstance(r, dict)]
+                    transport_options = [t for t in transport_options if isinstance(t, dict)]
 
-                        day_plan = {
-                            "day": day,
-                            "date": current_date,
-                            "attractions": [],
-                            "meals": [],
-                            "transport": None,
-                            "hotel": None,
-                            "notes": "",
-                            "weather": day_weather
+                    agent_results = {
+                        "attraction": {
+                            "attractions": attractions_data
+                        },
+                        "accommodation": {
+                            "hotels": hotels_data
+                        },
+                        "food": {
+                            "restaurants": restaurants_data
+                        },
+                        "transport": {
+                            "transport_options": transport_options,
+                            "route_data": route_data
                         }
+                    }
 
-                        # 添加景点(如果有)
-                        if attractions_result is not None and isinstance(attractions_result, dict) and "attractions" in attractions_result:
-                            attractions = attractions_result["attractions"]
-                            if isinstance(attractions, list) and len(attractions) > 0:
-                                attractions_per_day = max(1, len(attractions) // travel_days)
-                                start_idx = (day - 1) * attractions_per_day
-                                end_idx = min(start_idx + attractions_per_day, len(attractions))
-                                day_plan["attractions"] = attractions[start_idx:end_idx]
+                    # 使用整合函数生成每日行程
+                    structured_req = {
+                        "city_name": city_name,
+                        "travel_days": travel_days,
+                        "total_budget": total_budget,
+                        "travel_date": travel_date,
+                        "traveler_count": traveler_count,
+                        "preferences": preferences
+                    }
 
-                        # 添加餐饮(如果有)
-                        if food_result is not None and isinstance(food_result, dict) and "restaurants" in food_result:
-                            restaurants = food_result["restaurants"]
-                            if isinstance(restaurants, list) and len(restaurants) > 0:
-                                meals_per_day = min(3, len(restaurants))
-                                start_idx = (day - 1) * meals_per_day
-                                end_idx = min(start_idx + meals_per_day, len(restaurants))
-                                day_plan["meals"] = restaurants[start_idx:end_idx]
-
-                        # 第一天添加住宿信息
-                        if day == 1 and hotel_result is not None and isinstance(hotel_result, dict) and "hotels" in hotel_result:
-                            hotels = hotel_result["hotels"]
-                            if isinstance(hotels, list) and len(hotels) > 0:
-                                day_plan["hotel"] = hotels[0]
-
-                        # 添加交通信息
-                        if transport_result is not None:
-                            day_plan["transport"] = transport_result
-
-                        day_plans.append(day_plan)
+                    day_plans = integrate_agent_results_to_daily_plans(agent_results, structured_req)
 
                     # 创建行程
                     itinerary = ItineraryService.create_itinerary(

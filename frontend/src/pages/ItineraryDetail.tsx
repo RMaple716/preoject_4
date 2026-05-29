@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
   Typography, 
   Button, 
@@ -20,9 +20,12 @@ import {
   InputNumber,
   Select,
   TimePicker,
-  Popconfirm
+  Popconfirm,
+  Tooltip,
+  Alert
 } from 'antd';
 import { 
+  ArrowRightOutlined,
   ArrowLeftOutlined,
   EnvironmentOutlined,
   CalendarOutlined,
@@ -35,13 +38,15 @@ import {
   EditOutlined,
   DeleteOutlined,
   PlusOutlined,
-  SaveOutlined
+  SaveOutlined,
+  CarOutlined,
+  GlobalOutlined
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { itineraryApi, Itinerary } from '../services/itineraryApi';
 import dayjs from 'dayjs';
 import WeatherInfo from '../components/weatherinfo';
-import TransportInfo from '../components/transportinfo';
+import type { NavigationData, LocationPoint } from '../components/NavigationMapView';
 
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
@@ -75,7 +80,7 @@ interface Meal {
   avg_price?: number;
   rating?: number;
   specialties?: string[];
-  meal_type?: string; // breakfast/lunch/dinner
+  meal_type?: string;
   meal_time?: string;
   time?: string;
   start_time?: string;
@@ -255,7 +260,7 @@ const MealForm: React.FC<{
   );
 };
 
-// 景点卡片组件（带编辑功能）
+// 景点卡片组件
 const AttractionCard: React.FC<{ 
   attraction: any; 
   index: number;
@@ -266,7 +271,7 @@ const AttractionCard: React.FC<{
   <Card 
     size="small" 
     style={{ marginBottom: 8 }}
-    bodyStyle={{ padding: '12px' }}
+    styles={{ body: { padding: '12px' } }}
     extra={
       <Space size="small">
         <Button 
@@ -321,7 +326,9 @@ const AttractionCard: React.FC<{
         )}
         {attraction.location && (
           <Tag icon={<EnvironmentOutlined />}>
-            {attraction.location}
+            {typeof attraction.location === 'object' 
+              ? `${attraction.location.lat?.toFixed(4)}, ${attraction.location.lng?.toFixed(4)}`
+              : attraction.location}
           </Tag>
         )}
       </Space>
@@ -329,7 +336,7 @@ const AttractionCard: React.FC<{
   </Card>
 );
 
-// 餐饮卡片组件（带编辑功能）
+// 餐饮卡片组件
 const MealCard: React.FC<{ 
   meal: any; 
   index: number;
@@ -340,7 +347,7 @@ const MealCard: React.FC<{
   <Card 
     size="small" 
     style={{ marginBottom: 8 }}
-    bodyStyle={{ padding: '12px' }}
+    styles={{ body: { padding: '12px' } }}
     extra={
       <Space size="small">
         <Button 
@@ -396,20 +403,22 @@ const MealCard: React.FC<{
   </Card>
 );
 
-//住宿信息组件
+// 住宿信息组件
 const HotelInfo: React.FC<{ hotel: any }> = ({ hotel }) => (
   <Card 
     size="small"
     style={{ marginBottom: 8, backgroundColor: '#f6ffed' }}
-    bodyStyle={{ padding: '12px' }}
+    styles={{ body: { padding: '12px' } }}
   >
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
       <Text strong><HomeOutlined /> 住宿安排</Text>
       <Text>{hotel.name}</Text>
-      {hotel.location && (
+            {hotel.location && (
         <Text type="secondary">
           <EnvironmentOutlined style={{ marginRight: 4 }} />
-          {hotel.location}
+          {typeof hotel.location === 'object' 
+            ? `${hotel.location.lat?.toFixed(4)}, ${hotel.location.lng?.toFixed(4)}`
+            : hotel.location}
         </Text>
       )}
       {hotel.price_per_night && (
@@ -431,7 +440,187 @@ const HotelInfo: React.FC<{ hotel: any }> = ({ hotel }) => (
   </Card>
 );
 
-// 每日行程内容组件（带编辑功能）
+// ====================== 将交通数据转换为 NavigationMapView 所需格式 ======================
+const convertTransportToNavigationData = (transport: any): NavigationData | null => {
+  if (!transport) return null;
+
+  if (transport.data && transport.data.items && transport.data.items.length > 0) {
+    const item = transport.data.items[0];
+    if (item.type && item.steps !== undefined) {
+      return {
+        from: item.from || '',
+        to: item.to || '',
+        type: item.type || 'driving',
+        distance: item.distance || 0,
+        distance_text: item.distance_text || '',
+        duration: item.duration || 0,
+        duration_text: item.duration_text || '',
+        steps: item.steps || [],
+        polyline: item.polyline || ''
+      };
+    }
+  }
+
+  if (transport.type && transport.steps !== undefined) {
+    return {
+      from: transport.from || '',
+      to: transport.to || '',
+      type: transport.type || 'driving',
+      distance: transport.distance || 0,
+      distance_text: transport.distance_text || '',
+      duration: transport.duration || 0,
+      duration_text: transport.duration_text || '',
+      steps: transport.steps || [],
+      polyline: transport.polyline || ''
+    };
+  }
+
+  if (transport.from_location || transport.from) {
+    return {
+      from: transport.from_location || transport.from || '',
+      to: transport.to_location || transport.to || '',
+      type: transport.mode || transport.type || 'driving',
+      distance: transport.distance || 0,
+      distance_text: transport.distance_text || `${(transport.distance / 1000 || 0).toFixed(1)}公里`,
+      duration: transport.duration_seconds || transport.duration || 0,
+      duration_text: transport.duration || transport.duration_text || '',
+      steps: transport.steps || [],
+      polyline: transport.polyline || ''
+    };
+  }
+
+  return null;
+};
+
+// ====================== 从景点数据提取坐标 ======================
+const extractLocationCoords = (item: any): string | null => {
+  if (!item) return null;
+  if (item.location && typeof item.location === 'object') {
+    const lat = item.location.lat;
+    const lng = item.location.lng;
+    if (lat !== undefined && lng !== undefined) {
+      return `${lng},${lat}`;
+    }
+  }
+  return null;
+};
+
+// ==================== 全景地图组件 ====================
+const PanoramaMapView: React.FC<{ locations: LocationPoint[] }> = ({ locations }) => {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!mapRef.current || locations.length === 0) return;
+
+    setLoading(true);
+    setLoadError(null);
+
+    const loadAMapScript = () => {
+      return new Promise<void>((resolve, reject) => {
+        if ((window as any).AMap) {
+          resolve();
+          return;
+        }
+        const securityCode = import.meta.env.VITE_AMAP_SECURITY_JS_CODE || '';
+        if (securityCode) {
+          (window as any)._AMapSecurityConfig = { securityJsCode: securityCode };
+        }
+        const apiKey = import.meta.env.VITE_AMAP_JS_API_KEY || '79e6fa00599f309662a90359d0dddda1';
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = `https://webapi.amap.com/maps?v=2.0&key=${apiKey}&plugin=AMap.ToolBar,AMap.Driving,AMap.Walking,AMap.Transit,AMap.Riding`;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('高德地图API加载失败'));
+        document.head.appendChild(script);
+      });
+    };
+
+    const initMap = async () => {
+      try {
+        await loadAMapScript();
+
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.destroy();
+        }
+
+        const map = new (window as any).AMap.Map(mapRef.current, {
+          zoom: 12,
+          center: [116.397428, 39.90923],
+          viewMode: '2D'
+        });
+        mapInstanceRef.current = map;
+
+        const toolbar = new (window as any).AMap.ToolBar();
+        map.addControl(toolbar);
+
+        const colorMap: Record<string, string> = {
+          attraction: '#1890ff',
+          hotel: '#722ed1',
+          restaurant: '#fa8c16',
+          start: '#52c41a',
+          end: '#ff4d4f',
+        };
+        const labelMap: Record<string, string> = {
+          attraction: '🏛️',
+          hotel: '🏨',
+          restaurant: '🍽️',
+          start: '🚩',
+          end: '🏁',
+        };
+
+        const markers: any[] = [];
+        locations.forEach((loc) => {
+          const marker = new (window as any).AMap.Marker({
+            position: [loc.lng, loc.lat],
+            map: map,
+            label: {
+              content: `<div style="background:${colorMap[loc.type] || '#666'};color:white;padding:2px 6px;border-radius:4px;font-size:12px;white-space:nowrap">${labelMap[loc.type] || '📍'} ${loc.name}</div>`,
+              direction: 'top',
+            },
+          });
+          markers.push(marker);
+        });
+
+        map.setFitView(markers, false, [50, 50, 50, 50]);
+        setLoading(false);
+
+      } catch (error) {
+        setLoading(false);
+        setLoadError(`地图加载失败: ${(error as Error).message}`);
+      }
+    };
+
+    initMap();
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.destroy();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [locations]);
+
+  return (
+    <div>
+      {loading && <div style={{ textAlign: 'center', padding: 24 }}><Spin tip="加载地图中..." /></div>}
+      {loadError && <Alert message="地图加载提示" description={loadError} type="warning" showIcon style={{ marginBottom: 8 }} closable />}
+      <div
+        ref={mapRef}
+        style={{
+          width: '100%',
+          height: '500px',
+          borderRadius: '8px',
+          display: loading ? 'none' : 'block'
+        }}
+      />
+    </div>
+  );
+};
+
+// ==================== 每日行程内容组件 ====================
 const DayPlanContent: React.FC<{ 
   dayPlan: any;
   dayIndex: number;
@@ -455,7 +644,6 @@ const DayPlanContent: React.FC<{
 }) => {
   const timelineItems = [];
 
-  // 添加天气信息（如果有）
   if (dayPlan.weather) {
     timelineItems.push({
       color: 'cyan',
@@ -463,15 +651,49 @@ const DayPlanContent: React.FC<{
     });
   }
 
-  // 添加交通（如果有）
-  if (dayPlan.transport) {
+    const navData = convertTransportToNavigationData(dayPlan.transport);
+  if (navData) {
     timelineItems.push({
       color: 'blue',
-      children: <TransportInfo transport={dayPlan.transport} />
+      dot: <CarOutlined />,
+      children: (
+        <Card size="small" style={{ marginBottom: 8, border: '1px solid #d6e4ff' }}
+          styles={{ header: { backgroundColor: '#f0f5ff', padding: '8px 12px' } }}
+          title={
+            <Space>
+              <CarOutlined style={{ color: '#1890ff' }} />
+              <Text strong>交通导航</Text>
+            </Space>
+          }
+        >
+          <div style={{ background: '#f0f5ff', borderRadius: 8, padding: '12px 16px', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+              <Tag icon={<CarOutlined />} color={navData.type === 'walking' ? 'blue' : navData.type === 'transit' ? 'green' : 'orange'}>
+                {navData.type === 'walking' ? '步行' : navData.type === 'transit' ? '公交/地铁' : navData.type === 'driving' ? '驾车' : navData.type}
+              </Tag>
+              {navData.duration_text && <Tag color="blue">⏱ {navData.duration_text}</Tag>}
+              {navData.distance_text && <Tag color="green">📏 {navData.distance_text}</Tag>}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Text><EnvironmentOutlined style={{ color: '#52c41a' }} /> {navData.from}</Text>
+              <ArrowRightOutlined style={{ color: '#1890ff' }} />
+              <Text><EnvironmentOutlined style={{ color: '#ff4d4f' }} /> {navData.to}</Text>
+            </div>
+          </div>
+          {navData.steps && navData.steps.length > 0 ? (
+            <div style={{ textAlign: 'center', padding: 8 }}>
+              <Text type="secondary">共 {navData.steps.length} 个导航步骤，点击上方"查看全景地图"查看路线</Text>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 8 }}>
+              <Text type="secondary">暂无详细的导航步骤数据</Text>
+            </div>
+          )}
+        </Card>
+      )
     });
   }
 
-  // 添加景点
   if (dayPlan.attractions && dayPlan.attractions.length > 0) {
     timelineItems.push({
       color: 'green',
@@ -505,7 +727,6 @@ const DayPlanContent: React.FC<{
       )
     });
   } else {
-    // 没有景点时显示添加按钮
     timelineItems.push({
       color: 'green',
       dot: <CameraOutlined />,
@@ -522,7 +743,6 @@ const DayPlanContent: React.FC<{
     });
   }
 
-  // 添加餐饮
   if (dayPlan.meals && dayPlan.meals.length > 0) {
     timelineItems.push({
       color: 'orange',
@@ -556,7 +776,6 @@ const DayPlanContent: React.FC<{
       )
     });
   } else {
-    // 没有餐饮时显示添加按钮
     timelineItems.push({
       color: 'orange',
       dot: <RestOutlined />,
@@ -573,7 +792,6 @@ const DayPlanContent: React.FC<{
     });
   }
 
-  // 添加住宿（如果有）
   if (dayPlan.hotel) {
     timelineItems.push({
       color: 'purple',
@@ -581,12 +799,11 @@ const DayPlanContent: React.FC<{
     });
   }
 
-  // 添加备注
   timelineItems.push({
     color: 'gray',
     dot: <FileTextOutlined />,
     children: (
-      <Card size="small" bodyStyle={{ padding: '12px' }}>
+      <Card size="small" styles={{ body: { padding: '12px' } }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <Text type="secondary"><FileTextOutlined /> 备注：</Text>
           <Button 
@@ -610,6 +827,7 @@ const DayPlanContent: React.FC<{
   return <Timeline items={timelineItems} />;
 };
 
+// ==================== 主页面组件 ====================
 const ItineraryDetail: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -617,7 +835,10 @@ const ItineraryDetail: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [itinerary, setItinerary] = useState<Itinerary | null>(null);
   
-  // 编辑状态
+  // 全景地图状态
+  const [panoramaMapVisible, setPanoramaMapVisible] = useState(false);
+  const [panoramaLocations, setPanoramaLocations] = useState<LocationPoint[]>([]);
+  
   const [editAttractionModal, setEditAttractionModal] = useState<{
     visible: boolean;
     dayIndex: number;
@@ -662,7 +883,6 @@ const ItineraryDetail: React.FC = () => {
     }
   };
 
-  // 保存行程
   const saveItinerary = async () => {
     if (!itinerary || !id) return;
     
@@ -687,7 +907,6 @@ const ItineraryDetail: React.FC = () => {
     }
   };
 
-  // 景点编辑处理
   const handleEditAttraction = (dayIndex: number, attractionIndex: number) => {
     const attraction = itinerary?.day_plans?.[dayIndex]?.attractions?.[attractionIndex];
     setEditAttractionModal({
@@ -731,10 +950,8 @@ const ItineraryDetail: React.FC = () => {
     const attractions = [...(newDayPlans[editAttractionModal.dayIndex].attractions || [])];
     
     if (editAttractionModal.attractionIndex !== undefined) {
-      // 编辑现有景点
       attractions[editAttractionModal.attractionIndex] = values;
     } else {
-      // 添加新景点
       attractions.push(values);
     }
     
@@ -752,7 +969,6 @@ const ItineraryDetail: React.FC = () => {
     message.success(editAttractionModal.attractionIndex !== undefined ? '修改成功' : '添加成功');
   };
 
-  // 餐饮编辑处理
   const handleEditMeal = (dayIndex: number, mealIndex: number) => {
     const meal = itinerary?.day_plans?.[dayIndex]?.meals?.[mealIndex];
     setEditMealModal({
@@ -796,10 +1012,8 @@ const ItineraryDetail: React.FC = () => {
     const meals = [...(newDayPlans[editMealModal.dayIndex].meals || [])];
     
     if (editMealModal.mealIndex !== undefined) {
-      // 编辑现有餐饮
       meals[editMealModal.mealIndex] = values;
     } else {
-      // 添加新餐饮
       meals.push(values);
     }
     
@@ -817,7 +1031,6 @@ const ItineraryDetail: React.FC = () => {
     message.success(editMealModal.mealIndex !== undefined ? '修改成功' : '添加成功');
   };
 
-  // 备注编辑处理
   const handleEditNotes = (dayIndex: number) => {
     const notes = itinerary?.day_plans?.[dayIndex]?.notes;
     setEditNotesModal({
@@ -851,7 +1064,6 @@ const ItineraryDetail: React.FC = () => {
     }
   };
 
-  // 删除行程
   const handleDeleteItinerary = async () => {
     if (!id) return;
     
@@ -891,7 +1103,6 @@ const ItineraryDetail: React.FC = () => {
 
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
-      {/* 返回按钮 */}
       <Button 
         icon={<ArrowLeftOutlined />} 
         onClick={() => navigate('/itineraries')}
@@ -900,7 +1111,6 @@ const ItineraryDetail: React.FC = () => {
         返回列表
       </Button>
 
-      {/* 行程基本信息卡片 */}
       <Card style={{ marginBottom: 24 }}>
         <Row gutter={[16, 16]}>
           <Col xs={24} md={16}>
@@ -926,7 +1136,6 @@ const ItineraryDetail: React.FC = () => {
                   title="天数"
                   value={itinerary.travel_days}
                   suffix="天"
-                  valueStyle={{ fontSize: 18 }}
                 />
               </Col>
             </Row>
@@ -958,18 +1167,65 @@ const ItineraryDetail: React.FC = () => {
       </Card>
 
       {/* 每日行程时间轴 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <Title level={4} style={{ margin: 0 }}>
           <CalendarOutlined /> 每日行程安排
         </Title>
-        <Button 
-          type="primary" 
-          icon={<SaveOutlined />} 
-          onClick={saveItinerary}
-          loading={saving}
-        >
-          保存修改
-        </Button>
+        <Space>
+          <Tooltip title="查看行程中所有景点和住宿在地图上的位置">
+            <Button 
+              icon={<GlobalOutlined />} 
+              onClick={() => {
+                const allPoints: LocationPoint[] = [];
+                if (itinerary?.day_plans) {
+                  itinerary.day_plans.forEach((day: any) => {
+                    if (day.attractions) {
+                      day.attractions.forEach((attr: any) => {
+                        const coords = extractLocationCoords(attr);
+                        if (coords) {
+                          const [lng, lat] = coords.split(',').map(Number);
+                          allPoints.push({ name: attr.name, lat, lng, type: 'attraction', day: day.day });
+                        }
+                      });
+                    }
+                    if (day.hotel) {
+                      const coords = extractLocationCoords(day.hotel);
+                      if (coords) {
+                        const [lng, lat] = coords.split(',').map(Number);
+                        allPoints.push({ name: day.hotel.name || '住宿', lat, lng, type: 'hotel', day: day.day });
+                      }
+                    }
+                    if (day.meals) {
+                      day.meals.forEach((meal: any) => {
+                        const coords = extractLocationCoords(meal);
+                        if (coords) {
+                          const [lng, lat] = coords.split(',').map(Number);
+                          allPoints.push({ name: meal.name || meal.restaurant_name || '餐饮', lat, lng, type: 'restaurant', day: day.day });
+                        }
+                      });
+                    }
+                  });
+                }
+                if (allPoints.length === 0) {
+                  message.warning('暂无坐标数据，无法展示全景地图');
+                  return;
+                }
+                setPanoramaLocations(allPoints);
+                setPanoramaMapVisible(true);
+              }}
+            >
+              查看全景地图
+            </Button>
+          </Tooltip>
+          <Button 
+            type="primary" 
+            icon={<SaveOutlined />} 
+            onClick={saveItinerary}
+            loading={saving}
+          >
+            保存修改
+          </Button>
+        </Space>
       </div>
       
       {itinerary.day_plans && itinerary.day_plans.length > 0 ? (
@@ -1002,7 +1258,6 @@ const ItineraryDetail: React.FC = () => {
         <Empty description="暂无行程安排" />
       )}
 
-      {/* 底部操作按钮 */}
       <Divider />
       <Space>
         <Button type="primary" onClick={() => navigate('/itineraries')}>
@@ -1064,6 +1319,20 @@ const ItineraryDetail: React.FC = () => {
             <TextArea rows={4} placeholder="输入备注信息..." />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 全景地图弹窗 */}
+      <Modal
+        title="全景地图 - 所有地点标注"
+        open={panoramaMapVisible}
+        onCancel={() => setPanoramaMapVisible(false)}
+        footer={null}
+        width={900}
+        style={{ top: 20 }}
+      >
+        {panoramaMapVisible && (
+          <PanoramaMapView locations={panoramaLocations} />
+        )}
       </Modal>
     </div>
   );

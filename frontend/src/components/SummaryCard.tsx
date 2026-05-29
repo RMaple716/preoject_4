@@ -38,9 +38,8 @@ const SummaryCard: React.FC<SummaryCardProps> = ({ city, days, budget, travelers
             title="预算"
             value={budget}
             precision={0}
-            prefix="¥"
-            suffix="元"
             prefix={<DollarOutlined />}
+            suffix="元"
           />
         </Col>
         <Col span={6}>

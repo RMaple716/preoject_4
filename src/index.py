@@ -61,6 +61,7 @@ app.include_router(src.routes.static_data_router)
 app.include_router(src.routes.integration_router)
 app.include_router(src.routes.nlp_router)
 app.include_router(src.routes.weather_router)
+app.include_router(src.routes.navigation_router)
 
 # 根路径
 @app.get("/")

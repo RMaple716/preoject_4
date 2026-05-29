@@ -9,6 +9,14 @@ from src.services.database_service import StaticDataService
 
 router = APIRouter(prefix="/api/v1/static", tags=["静态数据"])
 
+
+def _make_location(lat: Optional[float], lng: Optional[float]) -> Optional[dict]:
+    """将数据库中的 lat/lng 转为前端需要的 {lat, lng} 对象格式"""
+    if lat is not None and lng is not None:
+        return {"lat": float(lat), "lng": float(lng)}
+    return None
+
+
 @router.get("/attractions")
 async def get_attractions(
     category: Optional[str] = None, 
@@ -46,7 +54,7 @@ async def get_attractions(
         "category": attr.category,
         "description": attr.description,
         "address": attr.address,
-        "location": f"{attr.latitude},{attr.longitude}" if attr.latitude and attr.longitude else attr.address or "",
+        "location": _make_location(attr.latitude, attr.longitude),
         "opening_hours": attr.opening_hours,
         "ticket_price": attr.ticket_price,
         "recommended_duration": attr.recommended_duration,
@@ -63,6 +71,7 @@ async def get_attractions(
         ).model_dump(), 
         msg="获取成功"
     )
+
 
 @router.get("/attractions/{city_name}")
 async def get_city_attractions(city_name: str, db: Session = Depends(get_db)):
@@ -86,7 +95,7 @@ async def get_city_attractions(city_name: str, db: Session = Depends(get_db)):
         "category": attr.category,
         "description": attr.description,
         "address": attr.address,
-        "location": f"{attr.latitude},{attr.longitude}" if attr.latitude and attr.longitude else attr.address or "",
+        "location": _make_location(attr.latitude, attr.longitude),
         "opening_hours": attr.opening_hours,
         "ticket_price": attr.ticket_price,
         "recommended_duration": attr.recommended_duration,
@@ -99,6 +108,7 @@ async def get_city_attractions(city_name: str, db: Session = Depends(get_db)):
         data={"city_name": city_name, "total": len(attraction_list), "attractions": attraction_list}, 
         msg="获取成功"
     )
+
 
 @router.get("/cities")
 async def get_cities(db: Session = Depends(get_db)):
@@ -119,6 +129,7 @@ async def get_cities(db: Session = Depends(get_db)):
         msg="获取成功"
     )
 
+
 @router.get("/locations/{city_name}")
 async def get_city_locations(city_name: str, category: Optional[str] = None, db: Session = Depends(get_db)):
     """从数据库查询指定城市的地点库（交通枢纽等）"""
@@ -138,7 +149,7 @@ async def get_city_locations(city_name: str, category: Optional[str] = None, db:
         "city_name": city_name,
         "category": loc.category,
         "address": loc.address,
-        "location": f"{loc.latitude},{loc.longitude}" if loc.latitude and loc.longitude else loc.address or "",
+        "location": _make_location(loc.latitude, loc.longitude),
         "description": loc.description
     } for loc in locations]
     
@@ -146,6 +157,7 @@ async def get_city_locations(city_name: str, category: Optional[str] = None, db:
         data={"city_name": city_name, "total": len(location_list), "locations": location_list},
         msg="获取成功"
     )
+
 
 @router.get("/hotels/{city_name}")
 async def get_city_hotels(
@@ -176,7 +188,7 @@ async def get_city_hotels(
         "hotel_id": hotel.hotel_id,
         "name": hotel.name,
         "city_name": city_name,
-        "location": f"{hotel.latitude},{hotel.longitude}" if hotel.latitude and hotel.longitude else hotel.address or "",
+        "location": _make_location(hotel.latitude, hotel.longitude),
         "address": hotel.address,
         "star_rating": hotel.star_rating,
         "price_range": hotel.price_range,
@@ -193,6 +205,7 @@ async def get_city_hotels(
         data={"city_name": city_name, "total": len(hotel_list), "hotels": hotel_list},
         msg="获取成功"
     )
+
 
 @router.get("/restaurants/{city_name}")
 async def get_city_restaurants(
@@ -221,7 +234,7 @@ async def get_city_restaurants(
         "restaurant_id": rest.restaurant_id,
         "name": rest.name,
         "city_name": city_name,
-        "location": f"{rest.latitude},{rest.longitude}" if rest.latitude and rest.longitude else rest.address or "",
+        "location": _make_location(rest.latitude, rest.longitude),
         "cuisine_type": rest.cuisine_type,
         "address": rest.address,
         "price_level": rest.price_level,

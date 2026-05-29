@@ -2,6 +2,7 @@ declare global {
   interface Window {
     AMap: {
       Map: any;
+      Marker: any;
       Polyline: any;
       GeometryUtil: {
         decodePath: (encodedPath: string) => any[];
