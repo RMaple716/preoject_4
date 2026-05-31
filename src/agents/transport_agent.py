@@ -5,7 +5,7 @@ import time
 import uuid
 from typing import Dict, Any, List, Optional
 from .base_agent import BaseAgent
-from src.services.navigation_service import NavigationService
+from src.services.navigation_service import navigation_service
 
 class TransportAgent(BaseAgent):
     """交通推荐智能体"""
@@ -16,7 +16,6 @@ class TransportAgent(BaseAgent):
             name="交通规划助手",
             description="为用户提供交通方案推荐"
         )
-        self.navigation_service = NavigationService()
 
     def get_capabilities(self) -> List[str]:
         return [
@@ -60,11 +59,11 @@ class TransportAgent(BaseAgent):
         # 如果没有提供坐标，尝试通过地址获取坐标
         if not from_coords and from_name:
             logger.info(f"[Transport] 正在获取起点坐标: {from_name}")
-            from_coords = await self.navigation_service.geocode(from_name)
+            from_coords = await navigation_service.geocode(from_name)
             logger.info(f"[Transport] 起点坐标: {from_coords}")
         if not to_coords and to_name:
             logger.info(f"[Transport] 正在获取终点坐标: {to_name}")
-            to_coords = await self.navigation_service.geocode(to_name)
+            to_coords = await navigation_service.geocode(to_name)
             logger.info(f"[Transport] 终点坐标: {to_coords}")
 
         # 优先使用坐标，如果没有则使用名称
@@ -79,7 +78,7 @@ class TransportAgent(BaseAgent):
         # 调用导航API
         try:
             logger.info(f"[Transport] 调用导航API - 起点: {origin}, 终点: {destination}, 模式: {mode_preference}")
-            nav_result = await self.navigation_service.get_direction(
+            nav_result = await navigation_service.get_direction(
                 origin=origin,
                 destination=destination,
                 mode=mode_preference
@@ -96,9 +95,9 @@ class TransportAgent(BaseAgent):
                     "from": from_name,
                     "to": to_name,
                     "distance": route_data['distance'],
-                    "distance_text": self.navigation_service.format_distance(route_data['distance']),
+                    "distance_text": navigation_service.format_distance(route_data['distance']),
                     "duration": route_data['duration'],
-                    "duration_text": self.navigation_service.format_duration(route_data['duration']),
+                    "duration_text": navigation_service.format_duration(route_data['duration']),
                     "steps": route_data['steps'],
                     "polyline": route_data.get('polyline', '')
                 }
@@ -110,8 +109,6 @@ class TransportAgent(BaseAgent):
                     "status": "success",
                     "data": {
                         "items": [transport_option],
-                        # 同时保留完整的导航数据
-                        "route_data": route_data
                     },
                     "metadata": {
                         "processing_time_ms": processing_time,

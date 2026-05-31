@@ -30,11 +30,19 @@ export interface AttractionsResponse {
 
 // 交通推荐接口
 export interface TransportRequest {
-  city_name: string;
-  travel_days: number;
-  budget?: number;
-  travel_date?: string;
-  mode_preference?: string;
+  from_location: {
+    name: string;
+    lat?: number;
+    lng?: number;
+    coords?: string;
+  };
+  to_location: {
+    name: string;
+    lat?: number;
+    lng?: number;
+    coords?: string;
+  };
+  mode_preference?: string;  // walking/transit/driving
 }
 
 export interface TransportOption {

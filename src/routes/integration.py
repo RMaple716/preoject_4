@@ -38,6 +38,7 @@ def calculate_route_optimization(attractions: List[Dict[str, Any]]) -> List[Dict
 def estimate_transport_time(from_loc: Dict, to_loc: Dict) -> int:
     """
     估算两点之间的交通时间（分钟）
+    根据坐标计算直线距离来估算
     
     Args:
         from_loc: 起点 {name, lat, lng}
@@ -46,11 +47,32 @@ def estimate_transport_time(from_loc: Dict, to_loc: Dict) -> int:
     Returns:
         预计交通时间（分钟）
     """
+    import math
+    
     if not from_loc or not to_loc:
         return 30  # 默认30分钟
     
-    # 简化判断：如果地点相同或很近，认为距离较近
-    # 处理字符串输入的情况
+    # 如果两个地点都有坐标，计算直线距离
+    if isinstance(from_loc, dict) and isinstance(to_loc, dict):
+        from_lat = from_loc.get("lat", 0)
+        from_lng = from_loc.get("lng", 0)
+        to_lat = to_loc.get("lat", 0)
+        to_lng = to_loc.get("lng", 0)
+
+        if all(v is not None for v in [from_lat, from_lng, to_lat, to_lng]):
+            # 简化版 Haversine 公式计算两点距离
+            R = 6371  # 地球半径 km
+            dlat = math.radians(float(to_lat) - float(from_lat))
+            dlng = math.radians(float(to_lng) - float(from_lng))
+            a = math.sin(dlat/2)**2 + math.cos(math.radians(float(from_lat))) * math.cos(math.radians(float(to_lat))) * math.sin(dlng/2)**2
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+            distance_km = R * c
+            
+            # 按公交速度（20km/h）估算时间
+            estimated_minutes = int((distance_km / 20) * 60)
+            return max(estimated_minutes, 5)  # 至少5分钟
+    
+    # 没有坐标时，根据名称做简单判断
     if isinstance(from_loc, str):
         from_name = from_loc
     else:
@@ -64,9 +86,7 @@ def estimate_transport_time(from_loc: Dict, to_loc: Dict) -> int:
     if from_name == to_name or from_name in to_name or to_name in from_name:
         return 15
     
-    # 其他情况默认30分钟
     return 30
-
 
 def integrate_agent_results_to_daily_plans(
     agent_results: Dict[str, Any],
@@ -190,12 +210,25 @@ def integrate_agent_results_to_daily_plans(
     afternoon_attractions = [a for a in optimized_attractions if isinstance(a, dict) and a.get("visit_time_slot") == "afternoon"]
     evening_attractions = [a for a in optimized_attractions if isinstance(a, dict) and a.get("visit_time_slot") == "evening"]
     
-    # 按天数均匀分配各时间段的景点
+    total_slots = travel_days * 3  # 每天3个时间段
+    total_attractions = len(morning_attractions) + len(afternoon_attractions) + len(evening_attractions)
+    
+    # 如果景点总数 <= 时间段总数，按正常分配
+    # 否则按比例压缩
     attractions_per_day = {
         "morning": max(1, len(morning_attractions) // travel_days) if morning_attractions else 0,
         "afternoon": max(1, len(afternoon_attractions) // travel_days) if afternoon_attractions else 0,
         "evening": max(1, len(evening_attractions) // travel_days) if evening_attractions else 0
     }
+    
+    # 防止索引越界：确保总分配数不超过实际景点数
+    def cap_indices(slot_attractions, per_day):
+        if per_day == 0:
+            return 0
+        total_needed = per_day * travel_days
+        if total_needed > len(slot_attractions):
+            return max(1, len(slot_attractions) // travel_days)
+        return per_day
     
     attraction_indices = {
         "morning": 0,
@@ -276,7 +309,7 @@ def integrate_agent_results_to_daily_plans(
                 
                 day_meals.append(restaurant)
         
-                # 添加交通信息（景点之间）
+        # 添加交通信息（景点之间）
         day_transport = None
         if len(day_attractions) >= 2:
             # 计算第一个景点到第二个景点的交通
@@ -288,72 +321,103 @@ def integrate_agent_results_to_daily_plans(
                 to_attr.get("location", {})
             )
             
-            # 尝试获取route_data中已有的路线数据（从TransportAgent返回）
-            route_data = agent_results.get("transport", {}).get("route_data", {})
+            from_loc = from_attr.get("location", {})
+            to_loc = to_attr.get("location", {})
+            has_from_coords = isinstance(from_loc, dict) and from_loc.get("lat") is not None and from_loc.get("lng") is not None
+            has_to_coords = isinstance(to_loc, dict) and to_loc.get("lat") is not None and to_loc.get("lng") is not None
             
-            # 尝试使用智能体返回的交通数据
-            matched_transport = None
-            if transport_data and len(transport_data) > 0:
-                # 查找匹配的交通选项
+            # 根据估算的交通时间推算距离（公交平均速度20km/h）
+            estimated_distance_m = int((transport_time / 60) * 20000)
+            estimated_distance_km = estimated_distance_m / 1000
+            
+                        # 如果有坐标，生成一条直线 polyline（供前端地图直接绘制）
+            polyline_str = ""
+            if has_from_coords and has_to_coords:
+                # 在两个坐标之间取10个插值点，生成高德格式的 polyline
+                steps_count = 10
+                lat_step = (to_loc["lat"] - from_loc["lat"]) / steps_count
+                lng_step = (to_loc["lng"] - from_loc["lng"]) / steps_count
+                points = []
+                for i in range(steps_count + 1):
+                    points.append(f"{from_loc['lng'] + lng_step * i},{from_loc['lat'] + lat_step * i}")
+                polyline_str = ";".join(points)
+            
+            # 生成简要步骤
+            steps = []
+            if from_attr.get("name") and to_attr.get("name"):
+                steps.append({
+                    "instruction": f"从{from_attr['name']}出发",
+                    "distance": estimated_distance_m,
+                    "duration": transport_time * 60,
+                    "polyline": polyline_str
+                })
+                steps.append({
+                    "instruction": f"到达{to_attr['name']}",
+                    "distance": 0,
+                    "duration": 0,
+                    "polyline": ""
+                })
+            
+                        # 生成高德格式的 polyline 直线路径（lng1,lat1;lng2,lat2;...）
+            polyline_str = ""
+            if has_from_coords and has_to_coords:
+                interpolate_count = 10
+                lat_step = (to_loc["lat"] - from_loc["lat"]) / interpolate_count
+                lng_step = (to_loc["lng"] - from_loc["lng"]) / interpolate_count
+                points = []
+                for i in range(interpolate_count + 1):
+                    points.append(f"{from_loc['lng'] + lng_step * i},{from_loc['lat'] + lat_step * i}")
+                polyline_str = ";".join(points)
+            
+            # 生成简要步骤（供前端文字导航显示）
+            steps = []
+            if from_attr.get("name") and to_attr.get("name"):
+                steps.append({
+                    "instruction": f"从{from_attr['name']}出发",
+                    "distance": estimated_distance_m,
+                    "duration": transport_time * 60,
+                    "polyline": polyline_str
+                })
+                steps.append({
+                    "instruction": f"到达{to_attr['name']}",
+                    "distance": 0,
+                    "duration": 0,
+                    "polyline": ""
+                })
+            
+            # 直接根据景点坐标生成交通信息
+            day_transport = {
+                "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
+                "from": from_attr.get("name", ""),
+                "to": to_attr.get("name", ""),
+                "type": "transit",
+                "duration": transport_time,
+                "duration_text": f"{transport_time}分钟",
+                "distance": estimated_distance_m,
+                "distance_text": f"{estimated_distance_km:.1f}公里",
+                "price": 5.0,
+                "departure_time": "11:30",
+                "steps": steps,
+                "polyline": polyline_str,
+                "from_location": from_loc if has_from_coords else {},
+                "to_location": to_loc if has_to_coords else {}
+            }
+            # 如果 transport_data 中有精确匹配的交通数据，则用来覆盖
+            if transport_data:
                 for transport in transport_data:
                     transport_from = transport.get("from", "")
                     transport_to = transport.get("to", "")
                     from_name = from_attr.get("name", "")
                     to_name = to_attr.get("name", "")
-
-                    # 模糊匹配起点和终点
-                    if (transport_from in from_name or from_name in transport_from) and                        (transport_to in to_name or to_name in transport_to):
-                        matched_transport = transport
+                    if transport_from == from_name and transport_to == to_name:
+                        merged = transport.copy()
+                        # 确保坐标信息不被覆盖
+                        if not merged.get("from_location") or merged.get("from_location") == {}:
+                            merged["from_location"] = from_loc if has_from_coords else {}
+                        if not merged.get("to_location") or merged.get("to_location") == {}:
+                            merged["to_location"] = to_loc if has_to_coords else {}
+                        day_transport = merged
                         break
-
-            if matched_transport:
-                day_transport = matched_transport.copy()
-                # 确保有必要的字段
-                if "transport_id" not in day_transport:
-                    day_transport["transport_id"] = f"trans_{uuid.uuid4().hex[:8]}"
-                if "price" not in day_transport:
-                    day_transport["price"] = 5.0
-                if "departure_time" not in day_transport:
-                    day_transport["departure_time"] = "11:30"
-                # 如果transport_item没有polyline但route_data有，则使用route_data的polyline
-                if not day_transport.get("polyline") and route_data.get("polyline"):
-                    day_transport["polyline"] = route_data["polyline"]
-                if not day_transport.get("steps") and route_data.get("steps"):
-                    day_transport["steps"] = route_data["steps"]
-            else:
-                # 没有匹配的交通数据，尝试从route_data提取
-                if route_data.get("polyline"):
-                    day_transport = {
-                        "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
-                        "from": from_attr.get("name", ""),
-                        "to": to_attr.get("name", ""),
-                        "type": route_data.get("mode", "transit"),
-                        "duration": f"{transport_time}分钟",
-                        "duration_text": f"{transport_time}分钟",
-                        "distance": route_data.get("distance", 5000),
-                        "distance_text": f"{max(route_data.get('distance', 5000) / 1000, 0.1):.1f}公里" if route_data.get("distance") else "5.0公里",
-                        "price": 5.0,
-                        "departure_time": "11:30",
-                        "steps": route_data.get("steps", []),
-                        "polyline": route_data.get("polyline", "")
-                    }
-                else:
-                    # 创建默认的交通信息
-                    day_transport = {
-                        "transport_id": f"trans_{uuid.uuid4().hex[:8]}",
-                        "from": from_attr.get("name", ""),
-                        "to": to_attr.get("name", ""),
-                        "type": "transit",
-                        "duration": f"{transport_time}分钟",
-                        "duration_text": f"{transport_time}分钟",
-                        "distance": 5000,
-                        "distance_text": "5.0公里",
-                        "price": 5.0,
-                        "departure_time": "11:30",
-                        "steps": [],
-                        "polyline": ""
-                    }
-        
         # 添加住宿信息（仅第一天或需要换酒店时）
         day_hotel = None
         if day == 1 and hotels_data:
