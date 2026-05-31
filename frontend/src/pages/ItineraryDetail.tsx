@@ -42,8 +42,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { itineraryApi, Itinerary } from '../services/itineraryApi';
 import dayjs from 'dayjs';
 import WeatherInfo from '../components/weatherinfo';
-import { NavigationMapView } from '../components/NavigationMapView';
-import type { NavigationData, LocationPoint } from '../components/NavigationMapView';
+import { NavigationMapView, MultiRouteMapModal } from '../components/NavigationMapView';
+import type { NavigationData, LocationPoint, RouteSegment } from '../components/NavigationMapView';
+import { formatLocation, extractLatLng } from '../utils/locationHelper';
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
 
@@ -320,13 +321,11 @@ const AttractionCard: React.FC<{
             ¥{attraction.ticket_price}
           </Tag>
         )}
-        {attraction.location && (
+         {attraction.location && (
           <Tag icon={<EnvironmentOutlined />}>
-            {typeof attraction.location === 'object' 
-              ? `${attraction.location.lat?.toFixed(4)}, ${attraction.location.lng?.toFixed(4)}`
-              : attraction.location}
+            {formatLocation(attraction.location)}
           </Tag>
-        )}
+)}
       </Space>
     </Space>
   </Card>
@@ -410,13 +409,11 @@ const HotelInfo: React.FC<{ hotel: any }> = ({ hotel }) => (
       <Text strong><HomeOutlined /> 住宿安排</Text>
       <Text>{hotel.name}</Text>
             {hotel.location && (
-        <Text type="secondary">
-          <EnvironmentOutlined style={{ marginRight: 4 }} />
-          {typeof hotel.location === 'object' 
-            ? `${hotel.location.lat?.toFixed(4)}, ${hotel.location.lng?.toFixed(4)}`
-            : hotel.location}
-        </Text>
-      )}
+  <Text type="secondary">
+    <EnvironmentOutlined style={{ marginRight: 4 }} />
+    {formatLocation(hotel.location)}
+  </Text>
+)}
       {hotel.price_per_night && (
         <Text type="secondary">¥{hotel.price_per_night}/晚</Text>
       )}
@@ -436,85 +433,30 @@ const HotelInfo: React.FC<{ hotel: any }> = ({ hotel }) => (
   </Card>
 );
 
-// ====================== 将交通数据转换为 NavigationMapView 所需格式 ======================
 const convertTransportToNavigationData = (transport: any): NavigationData | null => {
   if (!transport) return null;
 
-  if (transport.data && transport.data.items && transport.data.items.length > 0) {
-    const item = transport.data.items[0];
-    if (item.type && item.steps !== undefined) {
-      return {
-        from: item.from || '',
-        to: item.to || '',
-        type: item.type || 'driving',
-        distance: item.distance || 0,
-        distance_text: item.distance_text || '',
-        duration: item.duration || 0,
-        duration_text: item.duration_text || '',
-        steps: item.steps || [],
-        polyline: item.polyline || ''
-      };
-    }
-  }
+  const from = transport.from_location || transport.from || transport.origin || '';
+  const to = transport.to_location || transport.to || transport.destination || '';
+  const type = transport.mode || transport.type || 'driving';
 
-  if (transport.type && transport.steps !== undefined) {
-    return {
-      from: transport.from || '',
-      to: transport.to || '',
-      type: transport.type || 'driving',
-      distance: transport.distance || 0,
-      distance_text: transport.distance_text || '',
-      duration: transport.duration || 0,
-      duration_text: transport.duration_text || '',
-      steps: transport.steps || [],
-      polyline: transport.polyline || ''
-    };
-  }
+  const fromStr = formatLocation(from);
+  const toStr = formatLocation(to);
 
-  if (transport.from_location || transport.from) {
-    return {
-      from: transport.from_location || transport.from || '',
-      to: transport.to_location || transport.to || '',
-      type: transport.mode || transport.type || 'driving',
-      distance: transport.distance || 0,
-      distance_text: transport.distance_text || `${(transport.distance / 1000 || 0).toFixed(1)}公里`,
-      duration: transport.duration_seconds || transport.duration || 0,
-      duration_text: transport.duration || transport.duration_text || '',
-      steps: transport.steps || [],
-      polyline: transport.polyline || ''
-    };
-  }
+  if (!fromStr || !toStr) return null;
 
-// 第四分支：兜底处理 - 直接是 transport 对象（来自 integration/combine 的 dayPlan.transport）
-  if (transport.from !== undefined || transport.to !== undefined) {
-    return {
-      from: transport.from || '',
-      to: transport.to || '',
-      type: transport.type || 'driving',
-      distance: transport.distance || 0,
-      distance_text: transport.distance_text || '',
-      duration: transport.duration || 0,
-      duration_text: transport.duration_text || '',
-      steps: transport.steps || [],
-      polyline: transport.polyline || '',
-      fromLocation: transport.from_location || null,
-      toLocation: transport.to_location || null,
-    };
-  }
-
-  return null;
+  return {
+    from: fromStr,
+    to: toStr,
+    type,
+    fromLocation: extractLatLng(transport.from_location) || extractLatLng(transport.fromLocation) || null,
+    toLocation: extractLatLng(transport.to_location) || extractLatLng(transport.toLocation) || null,
+  };
 };
-
-// ====================== 从景点数据提取坐标 ======================
 const extractLocationCoords = (item: any): string | null => {
   if (!item) return null;
-  if (item.location && typeof item.location === 'object') {
-    const lat = item.location.lat;
-    const lng = item.location.lng;
-    if (lat !== undefined && lng !== undefined) {
-      return `${lng},${lat}`;
-    }
-  }
+  const latLng = extractLatLng(item.location);
+  if (latLng) return `${latLng.lng},${latLng.lat}`;
   return null;
 };
 
@@ -550,41 +492,117 @@ const DayPlanContent: React.FC<{
     });
   }
 
-    const navData = convertTransportToNavigationData(dayPlan.transport);
-  if (navData) {
-    const locationPoints: LocationPoint[] = [];
-    if (dayPlan.attractions) {
-      dayPlan.attractions.forEach((attr: any, idx: number) => {
-        const coords = extractLocationCoords(attr);
-        if (coords) {
-          const [lng, lat] = coords.split(',').map(Number);
-          locationPoints.push({
-            name: attr.name || `景点${idx + 1}`,
-            lat, lng,
-            type: 'attraction',
-            day: dayPlan.day
-          });
-        }
-      });
-    }
-    if (dayPlan.hotel) {
-      const hotelCoords = extractLocationCoords(dayPlan.hotel);
-      if (hotelCoords) {
-        const [lng, lat] = hotelCoords.split(',').map(Number);
+// ==================== 构造多路段数据 ====================
+const navData = convertTransportToNavigationData(dayPlan.transport);
+if (navData && dayPlan.attractions && dayPlan.attractions.length > 0) {
+  // 收集所有途经点的坐标
+  const locationPoints: LocationPoint[] = [];
+
+    const allAttractions = dayPlan.attractions
+    .map((attr: any, idx: number): { name: string; lat: number; lng: number } | null => {
+      const coords = extractLocationCoords(attr);
+      if (coords) {
+        const [lng, lat] = coords.split(',').map(Number);
         locationPoints.push({
-          name: dayPlan.hotel.name || '住宿',
+          name: attr.name || `景点${idx + 1}`,
           lat, lng,
-          type: 'hotel',
+          type: 'attraction' as const,
           day: dayPlan.day
         });
+        return { name: attr.name || `景点${idx + 1}`, lat, lng };
       }
+      return null;
+    })
+    .filter((item: { name: string; lat: number; lng: number } | null): item is { name: string; lat: number; lng: number } => item !== null);
+
+  // 如果有酒店，也加入
+  if (dayPlan.hotel) {
+    const hotelCoords = extractLocationCoords(dayPlan.hotel);
+    if (hotelCoords) {
+      const [lng, lat] = hotelCoords.split(',').map(Number);
+      locationPoints.push({
+        name: dayPlan.hotel.name || '住宿',
+        lat, lng,
+        type: 'hotel' as const,
+        day: dayPlan.day
+      });
     }
+  }
+
+  // 🆕 如果有多个景点，构造多路段数据
+    if (allAttractions.length >= 2) {
+    // 🆕 从 dayPlan.transport 获取默认出行方式，如果有多段交通数据也可以按段使用
+    const defaultMode = (dayPlan.transport?.mode || dayPlan.transport?.type || 'driving') as 'driving' | 'walking' | 'riding' | 'transit';
+
+    const segments: RouteSegment[] = [];
+    for (let i = 0; i < allAttractions.length - 1; i++) {
+      const from = allAttractions[i];
+      const to = allAttractions[i + 1];
+
+      // 🆕 如果 dayPlan 有按段的交通数据（segments），优先使用对应段的出行方式
+      const segmentTransport = dayPlan.transport?.segments?.[i];
+      const mode = (segmentTransport?.mode || segmentTransport?.type || defaultMode) as 'driving' | 'walking' | 'riding' | 'transit';
+
+      segments.push({
+        from: from.name || `景点${i + 1}`,
+        to: to.name || `景点${i + 2}`,
+        type: mode,
+        fromLocation: { lat: from.lat, lng: from.lng },
+        toLocation: { lat: to.lat, lng: to.lng },
+      });
+    }
+
+    // 使用多路段地图组件
     timelineItems.push({
       color: 'blue',
       dot: <CarOutlined />,
-      children: <NavigationMapView navigationData={navData} allLocations={locationPoints.length > 0 ? locationPoints : undefined} />
+      children: (
+        <MultiRouteMapModal
+          visible={true}
+          segments={segments}
+          allLocations={locationPoints.length > 0 ? locationPoints : undefined}
+        />
+      )
+    });
+  } else {
+    // 只有一个景点，使用单路段地图
+    timelineItems.push({
+      color: 'blue',
+      dot: <CarOutlined />,
+      children: (
+        <NavigationMapView
+          navigationData={navData}
+          allLocations={locationPoints.length > 0 ? locationPoints : undefined}
+        />
+      )
     });
   }
+} else if (navData) {
+  // 有 transport 数据但没有景点
+  const locationPoints: LocationPoint[] = [];
+  if (dayPlan.hotel) {
+    const hotelCoords = extractLocationCoords(dayPlan.hotel);
+    if (hotelCoords) {
+      const [lng, lat] = hotelCoords.split(',').map(Number);
+      locationPoints.push({
+        name: dayPlan.hotel.name || '住宿',
+        lat, lng,
+        type: 'hotel' as const,
+        day: dayPlan.day
+      });
+    }
+  }
+  timelineItems.push({
+    color: 'blue',
+    dot: <CarOutlined />,
+    children: (
+      <NavigationMapView
+        navigationData={navData}
+        allLocations={locationPoints.length > 0 ? locationPoints : undefined}
+      />
+    )
+  });
+}
 
   if (dayPlan.attractions && dayPlan.attractions.length > 0) {
     timelineItems.push({
